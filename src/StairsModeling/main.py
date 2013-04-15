@@ -12,6 +12,7 @@ import numpy.linalg as linalg
 from StairsModeling import Edge, StereoMatch, utility, geometry
 import itertools
 import pcl
+import time
 
 IMGPATH='/Users/yuncong/Documents/StairsModelingPy/staircase_new/'
 PROJPATH='/Users/yuncong/Documents/StairsModelingPy/'
@@ -54,7 +55,7 @@ if __name__ == '__main__':
 #    sys.exit()
     
     xyz = sgbm.xyz
-        
+    
     edgeParams = OrderedDict([('thresh1',(73,2000)),
                               ('thresh2',(137,2000)),
                             ('apertureSize',(3,21)),
@@ -67,8 +68,10 @@ if __name__ == '__main__':
     
     line_points = None
     disp_color = cv2.cvtColor(sgbm.disp8, cv2.cv.CV_GRAY2BGR)
-    step = 0.01
+#    step = 0.01
     merged_line_3d = []
+    
+    begin = time.time()
     for i, (rho,theta,x1,y1,x2,y2) in enumerate(edge.merged_line):
         x1p, y1p, x2p, y2p = int(x1), int(y1), int(x2), int(y2)
         p1 = np.array([x1p, y1p])
@@ -106,47 +109,25 @@ if __name__ == '__main__':
         diff = projected_points[-1] - projected_points[0]
 #        print projected_points[-1], projected_points[0], diff, linalg.norm(diff)
         direction_vector = diff / linalg.norm(diff)
-        print 'direction_vector', i, direction_vector
+        print 'center point', center_point, 'direction_vector', i, direction_vector
         
 #        if np.dot(direction_vector, np.array([1,0,0])) > np.cos(10*np.pi/180):
         if np.dot(direction_vector, np.array([1,0,0])) > 0.95:
             print 'added'
             merged_line_3d.append(np.hstack((center_point, direction_vector)))
-#        print 'U', U
-#        print 'S', S
-#        print 'V', V
-#        print 'Reconstr', Mhat
-        
-#        for a in np.arange(0,1,0.01):
-#            if -np.inf not in e1_3d: break
-#            p1_new = (a*p2 + (1-a)*p1).astype(np.int)
-#            e1_3d = xyz[p1_new[1], p1_new[0]]
-#            print p1_new, xyz[p1_new[1], p1_new[0]]
-#            print "correct e1, step %f"%a
-#             
-#        for a in np.arange(0,1,0.01):
-#            if -np.inf not in e2_3d: break
-#            p2_new = (a*p1 + (1-a)*p2).astype(np.int)
-#            e2_3d = xyz[p2_new[1], p2_new[0]]  
-#            print p2_new, xyz[p2_new[1], p2_new[0]]
-#            print "correct e2, step %f"%a
-#        print 'e1', e1_3d, 'e2', e2_3d
-#        
-#        for a in np.arange(0,1,0.01):
-#            point_xyz = a*e1_3d+(1-a)*e2_3d
-#            color_float = color_to_float((0,0,255))
-#            point_xyzrgb = np.append(point_xyz, color_float)
+
         if line_points is None:
             line_points = Mhat
         else:
 #            line_points = np.vstack((line_points, Mhat,interm_points_3d_valid))
             line_points = np.vstack((line_points, Mhat))
-
+    
+    print 'PCA edge line time', time.time() - begin
+    
     cv2.imshow("disp_color", disp_color)
     cv2.waitKey()
-     
-    line_points_color = utility.paint_pointcloud(line_points, np.array([0,0,255]))
-#    utility.write_XYZRGB(line_points_color, 'edges.pcd')
+    
+    #    utility.write_XYZRGB(line_points_color, 'edges.pcd')
      
      
 #    edge_p = pcl.PointCloud()
@@ -170,26 +151,56 @@ if __name__ == '__main__':
     vox.set_leaf_size(0.01,0.01,0.01)
     pv = vox.filter()
     xyz_downsampled = pv.to_array()
-    print 'after voxel grid filter', pv.size
+    point_number = xyz_downsampled.shape[0]
+    print 'after voxel grid filter', point_number
+    
+#    normals = geometry.compute_cloud_normals(xyz_downsampled, 10)
+#    normals_cloud = utility.draw_normals(xyz_downsampled, normals)
+#    xyz_cloud = utility.paint_pointcloud(xyz_downsampled, np.array([0,0,255]))
+#    xyz_normals_cloud = utility.add_to_pointcloud_color(xyz_cloud, normals_cloud, np.array([255,255,255]))
+#    utility.write_XYZRGB(xyz_normals_cloud, 'xyz_normals_cloud.pcd')
+#    sys.exit()
     
     merged_line_3d = np.array(merged_line_3d)
     plane_number = merged_line_3d.shape[0]
     direction_vector = np.mean(merged_line_3d[:,3:], axis=0)
+    direction_vector = direction_vector/linalg.norm(direction_vector)
     print 'direction_vector', direction_vector
+    edge_points = merged_line_3d[:,:3]
     sample_rise_normal = geometry.sample_vector_normal_to_vector(direction_vector, 1)
-    print 'sample_rise_normal', sample_rise_normal
-    plane_colors = np.random.randint(0,255,(plane_number,3))
+#    rise_colors = np.random.randint(0,255,(plane_number,3))
+#    tread_colors = np.random.randint(0,255,(plane_number,3))
+    plane_colors =  np.random.randint(0,255,(2*plane_number,3))
+    plane_colors[0] = np.array([255,255,255])
+    plane_colors[1] = np.array([200,200,200])
+
     for sample_rise_ind, rise_normal in enumerate(sample_rise_normal):
-        edges_plane_cloud = utility.generate_plane_frame_batch_multicolor(merged_line_3d[:,:3], direction_vector, 
-                                                      rise_normal, (4,2), plane_colors)
+                
 #        plane_frames = utility.generate_plane_frame_batch(merged_line_3d[:,:3], direction_vector, rise_normal,(4,2))
 #        edges_plane_points = utility.add_to_pointcloud_color(line_points_color, plane_frames, np.array([255,0,0]))
 #        utility.write_XYZRGB(all_points, 'edges_plane.pcd')
 #        sys.exit()
         
-        rise_normal = geometry.adjust_normal_direction(rise_normal, merged_line_3d[0,:3])
+        rise_normal = geometry.adjust_normal_direction(rise_normal, edge_points[0])
         tread_normal = np.cross(direction_vector, rise_normal)
-        tread_normal = geometry.adjust_normal_direction(tread_normal, merged_line_3d[0,:3])
+        tread_normal = tread_normal/linalg.norm(tread_normal)
+        tread_normal = geometry.adjust_normal_direction(tread_normal, edge_points[0])
+        print 'rise_normal', rise_normal
+        print 'tread_normal', tread_normal
+        
+#        rise_cloud = utility.generate_plane_frame_batch_multicolor(merged_line_3d[:,:3], 
+#                                          direction_vector, rise_normal, (4,1), rise_colors)
+#        tread_cloud = utility.generate_plane_frame_batch_multicolor(merged_line_3d[:,:3], 
+#                                          direction_vector, tread_normal, (4,1), tread_colors)
+#        plane_cloud = utility.add_to_pointcloud(rise_cloud, tread_cloud)
+        stairs_plane_cloud = utility.generate_stairs_plane_frame_batch_multicolor(edge_points, direction_vector,
+                                                                       rise_normal, tread_normal, plane_colors)
+        edges_plane_cloud = utility.add_to_pointcloud_color(stairs_plane_cloud, line_points, np.array([255,0,0]))
+        axis_cloud = utility.draw_axis()
+        edges_plane_cloud = utility.add_to_pointcloud(edges_plane_cloud, axis_cloud)
+        utility.write_XYZRGB(edges_plane_cloud, 'edges_plane.pcd')
+        
+#        sys.exit()
         
         rise_dist = np.zeros((plane_number-1,))
         tread_dist = np.zeros((plane_number-1,))
@@ -220,103 +231,274 @@ if __name__ == '__main__':
         print 'tread_multiples_ratio', tread_multiples_ratio
         print 'tread_dist_range', tread_dist_range
         
-        rise_offset = [geometry.distance_origin_to_plane(rise_normal, edge_point) 
-                            for edge_point in merged_line_3d[:,:3]]
-        tread_offset = [geometry.distance_origin_to_plane(tread_normal, edge_point)
-                            for edge_point in merged_line_3d[:,:3]]
-        
+        rise_offset = geometry.signed_distance_origin_to_plane_batch(rise_normal, edge_points)
+        tread_offset = geometry.signed_distance_origin_to_plane_batch(tread_normal, edge_points)
         print 'rise_offset', rise_offset
         print 'tread_offset', tread_offset
         
-        sample_indices = np.random.randint(0, xyz_downsampled.shape[0], xyz_downsampled.shape[0]/3)
+        sample_indices = np.random.randint(0, point_number, point_number/3)
+#        sample_indices = range(point_number)
+        sample_number = len(sample_indices)
         sample_points = xyz_downsampled[sample_indices]
 #        for p in xyz_downsampled:
-        print sample_points
-        
-#        edges_plane_sample_points = utility.add_to_pointcloud_color(edges_plane_points, 
+        print 'sample_points', sample_points
+
+#        edges_plane_sample_cloud = utility.add_to_pointcloud_color(edges_plane_cloud, 
 #                                                        sample_points, np.array([0,255,0]))
-#        utility.write_XYZRGB(edges_plane_sample_points, 'edges_plane_sample.pcd')
+#        utility.write_XYZRGB(edges_plane_sample_cloud, 'edges_plane_sample.pcd')
 #        sys.exit()
         
-        p_rise_offset = geometry.distance_origin_to_plane_batch(rise_normal, sample_points)
+        p_rise_offset = geometry.signed_distance_origin_to_plane_batch(rise_normal, sample_points)
+#        sample_rise_cloud = utility.generate_plane_frame_batch(sample_points, direction_vector, rise_normal, (4,1))
+#        edges_plane_cloud = utility.add_to_pointcloud_color(edges_plane_cloud, sample_rise_cloud, np.array([0,0,255]))
+        
         print 'p_rise_offset', p_rise_offset
-        farther_than_rise = np.greater.outer(p_rise_offset, np.hstack((0, rise_offset, 9999)))
+        if rise_offset[0] > rise_offset[-1]:
+            farther_than_rise = np.greater.outer(p_rise_offset, np.hstack((9999, rise_offset, -9999)))
+        else:
+            farther_than_rise = np.greater.outer(p_rise_offset, np.hstack((-9999, rise_offset, 9999)))
         print farther_than_rise
         row_id, front_rise = np.nonzero(farther_than_rise[:,1:] != farther_than_rise[:,:-1])    
         front_rise = front_rise-1
         
-        p_tread_offset = geometry.distance_origin_to_plane_batch(tread_normal, sample_points)
+        
+        
+        p_tread_offset = geometry.signed_distance_origin_to_plane_batch(tread_normal, sample_points)
+#        sample_tread_cloud = utility.generate_plane_frame_batch(sample_points, direction_vector, tread_normal, (4,1))
+#        edges_plane_cloud = utility.add_to_pointcloud_color(edges_plane_cloud, sample_tread_cloud, np.array([0,0,255])) 
+        
         print 'p_tread_offset', p_tread_offset
-        farther_than_tread = np.greater.outer(p_tread_offset, np.hstack((0, tread_offset, 9999)))
+        if tread_offset[0] > tread_offset[-1]:
+            farther_than_tread = np.greater.outer(p_tread_offset, np.hstack((9999, tread_offset, -9999)))
+        else:
+            farther_than_tread = np.greater.outer(p_tread_offset, np.hstack((-9999, tread_offset, 9999)))
+        print farther_than_rise
         row_id, front_tread = np.nonzero(farther_than_tread[:,1:] != farther_than_tread[:,:-1])
         front_tread = front_tread-1
         
-        print 'front_rise', front_rise 
-        print 'front_tread', front_tread
+        print 'front_rise', front_rise, front_rise.size
+        print 'front_tread', front_tread, front_tread.size
         
-        inlier_indices = []
-        inlier_indices_planes = [[]]*plane_number
-        inlier_weight = 0
-        for sample_ind, rise_front_ind in enumerate(front_rise):
-            dist = 9999
-            closer = None
-            sample_point = sample_points[sample_ind]
-            if rise_front_ind > -1:
-                edgepoint_front = merged_line_3d[rise_front_ind,:3]
-                proj_front = geometry.project_to_plane(sample_point, rise_normal, edgepoint_front)
-                dist_front = linalg.norm(proj_front - edgepoint_front)
-                if dist_front < dist:
-                    dist = dist_front
-                    proj = proj_front
-                    edgepoint = edgepoint_front
-                    closer = rise_front_ind
-                
-            if rise_front_ind < len(rise_offset) - 1:
-                edgepoint_back = merged_line_3d[rise_front_ind+1,:3]
-                proj_back = geometry.project_to_plane(sample_point, rise_normal, edgepoint_back)
-                dist_back = linalg.norm(proj_back - edgepoint_back)
-                if dist_back < dist:
-                    dist = dist_back
-                    proj = proj_back
-                    edgepoint = edgepoint_back
-                    closer = rise_front_ind + 1
-            
-            if geometry.is_on_same_side_as(proj, direction_vector, edgepoint, 
-                rise_normal, np.array([0,-999,0])) or dist > 0.1:
-#                print 'ignored'
-                continue
-            print sample_point, proj, dist, edgepoint, closer
-            
-            inlier_indices_planes[closer].append(sample_ind)
-            inlier_indices.append(sample_ind) 
+        planes_to_compare = np.nan*np.ones((sample_number,2))
+        is_outside = front_tread == front_rise
+        planes_to_compare[is_outside] = np.column_stack((front_tread[is_outside], front_rise[is_outside] + 1))
+        is_inside = front_tread == front_rise-1
+        planes_to_compare[is_inside] = np.column_stack((front_tread[is_inside]+1, front_rise[is_inside]))
+        
+#        print 'planes_to_compare', planes_to_compare
+        in_roi = is_outside + is_inside
+        sample_points_roi = sample_points[in_roi]
+        planes_to_compare_roi = planes_to_compare[in_roi]
+        roi_number = sample_points_roi.shape[0]  
+        print 'planes_to_compare_roi', planes_to_compare_roi
+        
+#        edges_plane_sample_roi_cloud = utility.add_to_pointcloud_color(edges_plane_cloud, 
+#                                                        sample_points_roi, np.array([0,255,0]))
+#        utility.write_XYZRGB(edges_plane_sample_roi_cloud, 'edges_plane_sample_roi.pcd')
 
-            inlier_weight += 1
+#        sys.exit()
+        
+        dist_to_plane = np.inf*np.ones((roi_number,2))    
+        for edge_ind, edge_point in enumerate(merged_line_3d[:,:3]):
+            print 'edge',edge_ind, edge_point
+            is_comparing_this_plane = planes_to_compare_roi == edge_ind
+            print is_comparing_this_plane 
+            dist_to_plane[is_comparing_this_plane[:,1], 1] =\
+             geometry.project_to_plane_only_distance_batch(sample_points_roi[is_comparing_this_plane[:,1]],
+                                                           rise_normal, edge_point)
+            dist_to_plane[is_comparing_this_plane[:,0], 0] =\
+             geometry.project_to_plane_only_distance_batch(sample_points_roi[is_comparing_this_plane[:,0]],
+                                              tread_normal, edge_point)
+        print 'dist_to_plane', dist_to_plane
+        attach_to_rise_not_tread = dist_to_plane[:,0] > dist_to_plane[:,1]
+        attach_plane_dist = np.where(attach_to_rise_not_tread, dist_to_plane[:,1], dist_to_plane[:,0])
+        attach_plane = np.where(attach_to_rise_not_tread, planes_to_compare_roi[:,1], planes_to_compare_roi[:,0]) 
+        
+#        def find_closest_plane_batch(rise_not_tread):
+#            
+#            if rise_not_tread:
+#                print 'rise'
+#                plane_normal = rise_normal
+#                front_plane = front_rise
+#            else:
+#                print 'tread'
+#                plane_normal = tread_normal
+#                front_plane = front_tread
+#                
+#            sample_dist_to_front = 9999*np.ones((sample_number,))
+#            sample_projs_to_front = np.zeros((sample_number,3))
+##            sample_on_correct_side_front = np.zeros((sample_number,))
+#            sample_dist_to_back = 9999*np.ones((sample_number,))
+#            sample_projs_to_back = np.zeros((sample_number,3))
+##            sample_on_correct_side_back = np.zeros((sample_number,))
+#            for plane_ind, edge_point in enumerate(merged_line_3d[:,:3]):
+#                print 'plane_ind', plane_ind
+#                sample_indices_with_front = np.nonzero(plane_ind == front_plane)[0]
+#                sample_indices_with_back = np.nonzero(plane_ind-1 == front_plane)[0]
+#                print 'sample_indices_with_front', sample_indices_with_front
+#                print 'sample_indices_with_back', sample_indices_with_back
+#                
+#                l1 = sample_indices_with_front.size
+#                sample_indices_all_compute = np.hstack((sample_indices_with_front,
+#                                                        sample_indices_with_back))
+#                sample_projs, sample_dist =\
+#                 geometry.project_to_plane_with_distance_batch(sample_points[sample_indices_all_compute],
+#                                              plane_normal, edge_point)
+#                
+#                sample_projs_to_front[sample_indices_with_front] = sample_projs[:l1]
+#                sample_dist_to_front[sample_indices_with_front] = sample_dist[:l1]
+#                sample_projs_to_back[sample_indices_with_back] = sample_projs[l1:]
+#                sample_dist_to_back[sample_indices_with_back] = sample_dist[l1:]
             
-        inlier_points = [sample_points[inlier_indices_plane] for inlier_indices_plane in inlier_indices_planes]
-        print [len(inlier_indices_plane) for inlier_indices_plane in inlier_indices_planes]
-        edges_plane_inlier_points = utility.add_to_multipointcloud_multicolor(edges_plane_cloud, 
-                                                    inlier_points, plane_colors)
-        utility.write_XYZRGB(edges_plane_inlier_points, 'edges_plane_inlier.pcd')
-        print '*******',sample_rise_ind, inlier_weight
+#                if rise_not_tread:
+#                    ref_point = np.array([0,-999,0])
+#                else:
+#                    ref_point = np.array([0,0,-999])
+#                sample_on_correct_side =\
+#                 geometry.is_on_same_side_as_with_projs_batch(sample_points[sample_indices_all_compute],
+#                 direction_vector, edge_point, plane_normal, ref_point,
+#                   sample_projs)
+#                sample_on_correct_side_front[sample_indices_with_front] = sample_on_correct_side[:l1]
+#                sample_on_correct_side_back[sample_indices_with_back] = sample_on_correct_side[l1:]           
             
+#            print 'sample_dist_to_front', sample_dist_to_front
+##            print 'sample_on_correct_side_front', sample_on_correct_side_front
+#            print 'sample_dist_to_back', sample_dist_to_back
+#            print 'sample_on_correct_side_back', sample_on_correct_side_back
+            
+#            if rise_not_tread:
+##                closer_to_front_not_back = True
+#                closest_plane = front_plane
+#                closest_dist = sample_dist_to_front
+##            print 'closer_to_front_not_back', closer_to_front_not_back
+#            else:
+##                closer_to_front_not_back = False
+#                closest_plane = front_plane + 1
+#                closest_dist = sample_dist_to_back
+##            closest_plane = np.where(closer_to_front_not_back, front_plane, front_plane+1)
+##            closest_dist = np.where(closer_to_front_not_back, sample_dist_to_front,
+##                                   sample_dist_to_back)
+#            return closest_plane, closest_dist
+#            on_correct_side = np.where(closer_to_front_not_back, sample_on_correct_side_front, 
+#                                       sample_on_correct_side_back)
+#            return closest_plane, closest_dist, on_correct_side
+            
+#        closest_rise, closest_dist_rise, on_correct_side_rise = find_closest_plane_batch(True)
+#        closest_rise, closest_dist_rise = find_closest_plane_batch(True)
+#        print 'closest_rise', closest_rise
+#        print 'closest_dist_rise', closest_dist_rise
+##        print 'on_correct_side_rise', on_correct_side_rise
+##        closest_tread, closest_dist_tread, on_correct_side_tread = find_closest_plane_batch(False)
+#        closest_tread, closest_dist_tread = find_closest_plane_batch(False)
+#        print 'closest_tread', closest_tread
+#        print 'closest_dist_tread', closest_dist_tread
+#        print 'on_correct_side_tread', on_correct_side_tread
+        
+#        attach_to_rise_not_tread = closest_dist_rise < closest_dist_tread
+#        print 'attach_to_rise_not_tread', attach_to_rise_not_tread
+#        
+#        closest_dist = np.where(attach_to_rise_not_tread, closest_dist_rise, closest_dist_tread)
+#        print 'closest_dist', closest_dist
+##        on_correct_side = np.where(attach_to_rise_not_tread, on_correct_side_rise, on_correct_side_tread)
+##        print 'on_correct_side', on_correct_side
+#        closest_plane_ind = np.where(attach_to_rise_not_tread, closest_rise, closest_tread)
+#        print 'closest_plane_ind', closest_plane_ind 
+        
+#        is_inlier = (on_correct_side * (closest_dist < 0.5)).astype(np.bool)
+        is_inlier = (attach_plane_dist < 0.2).astype(np.bool)
+        inlier_points = sample_points_roi[is_inlier]
+        print 'inlier_points', inlier_points.shape[0]
+        inlier_plane = attach_plane[is_inlier]
+        print 'inlier_plane', inlier_plane 
+        inlier_rise_not_tread = attach_to_rise_not_tread[is_inlier]    
+        print 'inlier_rise_not_tread', inlier_rise_not_tread 
+        inlier_points_grouped = [inlier_points[(inlier_plane==plane_ind)*b]\
+                                 for plane_ind in range(plane_number)\
+                                  for b in [inlier_rise_not_tread,-inlier_rise_not_tread]]
+        print 'inlier_points_grouped', inlier_points_grouped
+        
+        inlier_weight = inlier_points.shape[0]
+        print 'inlier_weight', inlier_weight 
+        
+#        inlier_points_grouped_rise = [inlier_points[(inlier_plane==plane_ind) * inlier_rise_not_tread]
+#                                    for plane_ind in range(plane_number)]
+#        print 'inlier_points_grouped_rise', inlier_points_grouped_rise
+#        inlier_points_grouped_tread = [inlier_points[(inlier_plane==plane_ind) * -inlier_rise_not_tread]
+#                                    for plane_ind in range(plane_number)]
+#        print 'inlier_points_grouped_tread', inlier_points_grouped_tread
+
+        
+#        inlier_indices_planes = [[] fo1r i in range(plane_number)]
+#        inlier_weight = 0
+        
+        
+#        def find_closest_plane(sample_point, plane_normal):
+#            if rise_front_ind > -1:
+#                edgepoint_front = merged_line_3d[rise_front_ind,:3]
+#                proj_front = geometry.project_to_plane(sample_point, plane_normal, edgepoint_front)
+#                dist_front = linalg.norm(proj_front - edgepoint_front)
+#                if dist_front < dist:
+#                    dist = dist_front
+#                    proj = proj_front
+#                    edgepoint = edgepoint_front
+#                    closer = rise_front_ind
+#                
+#            if rise_front_ind < len(rise_offset) - 1:
+#                edgepoint_back = merged_line_3d[rise_front_ind+1,:3]
+#                proj_back = geometry.project_to_plane(sample_point, plane_normal, edgepoint_back)
+#                dist_back = linalg.norm(proj_back - edgepoint_back)
+#                if dist_back < dist:
+#                    dist = dist_back
+#                    proj = proj_back
+#                    edgepoint = edgepoint_back
+#                    closer = rise_front_ind + 1
+#            
+#            if geometry.is_on_same_side_as(proj, direction_vector, edgepoint, 
+#                plane_normal, np.array([0,-999,0])) or dist > 0.1:
+##                print 'ignored'
+#                continue
+#            print sample_point, proj, dist, edgepoint, closer
+        
+#        for sample_ind, rise_front_ind in enumerate(front_rise):
+#            dist = 9999
+#            closer = None
+#            sample_point = sample_points[sample_ind]
+#            
+#            closer = find_closest_plane_batch(sample_point, )
+            
+#            inlier_indices_planes[closer].append(sample_ind)
+##            inlier_indices.append(sample_ind)
+#            inlier_weight += 1    
+            
+#        inlier_points = [sample_points[inlier_indices_plane] for inlier_indices_plane in inlier_indices_planes]
+#        print [len(inlier_indices_plane) for inlier_indices_plane in inlier_indices_planes]
+#        for plane_ind, inlier_indices_plane in enumerate(inlier_indices_planes):
+#            print plane_ind, inlier_indices_plane
+        edges_plane_inlier_cloud = utility.add_to_multipointcloud_multicolor(edges_plane_cloud, 
+                                                    inlier_points_grouped, plane_colors)
+        utility.write_XYZRGB(edges_plane_inlier_cloud, 'edges_plane_inlier.pcd')
+        
+        edges_plane_inlier_box_cloud = edges_plane_inlier_cloud
+#        for plane_ind in range(plane_number):
+        for plane_ind in range(plane_number):
+            x,d1,d2,w,h = geometry.find_boundingbox_project(inlier_points_grouped[2*plane_ind],
+                                               rise_normal, edge_points[plane_ind], direction_vector)
+            box_rise_one = utility.draw_box(x, d1, d2, w, h, np.array([255,255,255]))
+            edges_plane_inlier_box_cloud = utility.add_to_pointcloud(edges_plane_inlier_box_cloud, box_rise_one)
+            
+            x,d1,d2,w,h = geometry.find_boundingbox_project(inlier_points_grouped[2*plane_ind+1],
+                                               tread_normal, edge_points[plane_ind], direction_vector)
+            box_tread_one = utility.draw_box(x, d1, -d2, w, h, np.array([255,255,255]))
+            edges_plane_inlier_box_cloud = utility.add_to_pointcloud(edges_plane_inlier_box_cloud, box_tread_one)
+        
+#        utility.write_XYZRGB(edges_plane_inlier_points, 'edges_plane_inlier.pcd')
+#        edges_plane_inlier_points2 = utility.add_to_multipointcloud_multicolor(edges_plane_inlier_points, 
+#                                                    inlier_points_grouped_tread, tread_colors)
+        utility.write_XYZRGB(edges_plane_inlier_box_cloud, 'edges_plane_inlier_box_cloud.pcd')
+#        print '*******',sample_rise_ind, inlier_weight
                 
 sys.exit()
 
-
-#red_float = utility.color_to_float(np.array((0,0,255)))
-#white_float = utility.color_to_float(np.array((255,255,255)))
-#xyz_downsampled_color = np.hstack((xyz_downsampled, white_float*np.ones((xyz_downsampled.shape[0],1))))
-#line_points_color = np.hstack((line_points, red_float*np.ones((line_points.shape[0],1))))
-#all_points = np.vstack((xyz_downsampled_color,line_points_color))
-#utility.write_XYZRGB(all_points, 'edges.pcd')
-
-
-kd = pv.make_kdtree_flann()
-indices, sqr_distances = kd.nearest_k_search_for_cloud(p, 10)
-
-
-
-geometry
 
 #normals = []
 #for row in indices:

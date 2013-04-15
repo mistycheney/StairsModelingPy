@@ -1,4 +1,15 @@
 import numpy as np
+from StairsModeling import geometry
+
+def draw_axis():
+    origin = add_to_pointcloud_color(None, np.array([0,0,0]), np.array([255,255,255]))
+    origin = add_to_pointcloud_color(origin, np.outer(np.arange(0.01,1,0.01),np.array([1,0,0])),\
+                                      np.array([255,0,0]))
+    origin = add_to_pointcloud_color(origin, np.outer(np.arange(0.01,1,0.01),np.array([0,1,0])),\
+                                     np.array([0,255,0]))
+    origin = add_to_pointcloud_color(origin, np.outer(np.arange(0.01,1,0.01),np.array([0,0,1])),\
+                                      np.array([0,0,255]))
+    return origin
 
 
 def add_to_multipointcloud_multicolor(p, clouds, colors):
@@ -6,6 +17,59 @@ def add_to_multipointcloud_multicolor(p, clouds, colors):
     for cloud, color in zip(clouds, colors):
         p_multicolor = add_to_pointcloud_color(p_multicolor, cloud, color)
     return p_multicolor
+
+
+def draw_box(x,direction1,direction2,w,h, color):
+    top = add_to_pointcloud_color(None, x+np.outer(np.arange(0,w,0.01),direction1), color)
+    top_left = add_to_pointcloud_color(top, x+np.outer(np.arange(0,h,0.01),direction2), color)
+    right_lower_point = x+h*direction2+w*direction1
+    top_left_bottom = add_to_pointcloud_color(top_left, right_lower_point-np.outer(np.arange(0,w,0.01),direction1), color)
+    top_left_bottom_right = add_to_pointcloud_color(top_left_bottom, right_lower_point-np.outer(np.arange(0,h,0.01),direction2), color)
+    return top_left_bottom_right
+
+def generate_stairs_plane_frame_batch_multicolor(edge_points, direction_vector, rise_normal,
+                                                 tread_normal, colors):
+    plane_frames = []
+    for edge_ind, edge_point in enumerate(edge_points):
+        print edge_ind
+        w = 4
+        
+#        print 'rise'
+        right_center = edge_point + direction_vector*w/2
+        left_center = edge_point - direction_vector*w/2
+        line_normal = np.cross(direction_vector, rise_normal)
+        top_center = edge_point
+        if edge_ind == 0:
+            h = 4
+        else:
+            h = geometry.project_to_plane_only_distance(edge_point, tread_normal, edge_points[edge_ind-1])
+#        print 'h', h
+        bottom_center = edge_point - line_normal*h
+        left_border_points = left_center + np.outer(-np.arange(0,h,0.01), line_normal)
+        right_border_points = right_center + np.outer(-np.arange(0,h,0.01), line_normal)
+        top_border_points = top_center + np.outer(np.arange(-w/2.,w/2.,0.01), direction_vector)
+        bottom_border_points = bottom_center + np.outer(np.arange(-w/2.,w/2.,0.01), direction_vector)
+        rise_frame = np.vstack((left_border_points,right_border_points,top_border_points,bottom_border_points))      
+        plane_frames.append(rise_frame)
+        
+#        print 'tread'
+        line_normal = np.cross(direction_vector, tread_normal)
+        top_center = edge_point
+        if edge_ind == edge_points.shape[0]-1:
+            h = 4
+        else:
+            h = geometry.project_to_plane_only_distance(edge_point, rise_normal, edge_points[edge_ind+1])
+#        print 'h', h
+        bottom_center = edge_point + line_normal*h
+        left_border_points = left_center + np.outer(np.arange(0,h,0.01), line_normal)
+        right_border_points = right_center + np.outer(np.arange(0,h,0.01), line_normal)
+        top_border_points = top_center + np.outer(np.arange(-w/2.,w/2.,0.01), direction_vector)
+        bottom_border_points = bottom_center + np.outer(np.arange(-w/2.,w/2.,0.01), direction_vector)
+        tread_frame = np.vstack((left_border_points,right_border_points,top_border_points,bottom_border_points))      
+        plane_frames.append(tread_frame)
+    
+    plane_frames_multicolor = add_to_multipointcloud_multicolor(None, plane_frames, colors)
+    return plane_frames_multicolor
 
 def generate_plane_frame_batch_multicolor(plane_points, direction_vector, plane_normal, size, colors):
     plane_frames = []
@@ -51,7 +115,10 @@ def add_to_pointcloud(p, p1):
     return p
 
 def paint_pointcloud(p, color):
-    p_color = np.hstack((p, np.ones((p.shape[0],1))*color_to_float(color)))
+    if p.ndim == 1:
+        p_color = np.hstack((p, color_to_float(color)))
+    else:
+        p_color = np.hstack((p, np.ones((p.shape[0],1))*color_to_float(color)))
     return p_color
 
 def write_XYZRGB(points, filename):
@@ -77,10 +144,24 @@ def color_to_float(color):
     import struct
     if color.size == 1:
         color = [color] * 3
-    rgb = (color[2] << 16 | color[1] << 8 | color[0]);
+    rgb = (color[0] << 16 | color[1] << 8 | color[2]);
     rgb_hex = hex(rgb)[2:-1]
     s = '0' * (8 - len(rgb_hex)) + rgb_hex.capitalize()
 #            print color, rgb, hex(rgb)
     rgb_float = struct.unpack('!f', s.decode('hex'))[0]
 #            print rgb_float
     return rgb_float
+
+
+def draw_normals(points, normals):
+    normals_cloud = None
+    for p,n in zip(points, normals):
+        normals_cloud = add_to_pointcloud(normals_cloud, p + np.outer(np.arange(0,0.2,0.01), n))
+    return normals_cloud
+    
+    
+    
+    
+    
+    
+    

@@ -4,6 +4,7 @@ Created on Apr 8, 2013
 @author: yuncong
 '''
 
+from StairsModeling import geometry
 from StairsModeling.ParamsTuner import ParamsTuner
 import cv2
 import numpy as np
@@ -26,38 +27,67 @@ class EdgeTuner(ParamsTuner):
 #        self.non_maximum_suppression()
 #        self.trace_with_hysteresis()
         
+        begin = time.time()
         canny = cv2.Canny(self.img, self.thresh1, self.thresh2, apertureSize=self.apertureSize,
                           L2gradient=True)
+        print 'Canny time', time.time() - begin
         cv2.imshow("canny", canny)
         
-        lines = cv2.HoughLinesP(canny.astype(np.uint8), self.rho_res, self.theta_res*np.pi/180, self.hough_thresh, 
+        begin = time.time()
+        lines_list = cv2.HoughLinesP(canny.astype(np.uint8), self.rho_res, self.theta_res*np.pi/180, self.hough_thresh, 
                         minLineLength=self.minLineLength, maxLineGap=self.maxLineGap)
-                
+        print 'HoughLinesP time', time.time() - begin
+
 #        img_lines = cv2.cvtColor(self.img, cv2.cv.CV_GRAY2BGR)
-        if lines is not None:
-            print len(lines[0]),"lines"
-            lines_all = []
-            for i, (x1,y1,x2,y2) in enumerate(lines[0]):
-                # clip to -pi/2 to pi/2
-                print x1,y1,x2,y2
-                # from this point on, for use of hough transform, y has negative coordinate
-                line_params = np.cross(np.array([x1,-y1,1]), np.array([x2,-y2,1]))
-                a,b,c = line_params
-                
-                ab = np.sqrt(a**2+b**2)
-                if c < 0:
-                    theta = np.arctan2(b, a)
-                    rho = -c/ab
-                else:
-                    theta = np.arctan2(-b, -a)
-                    rho = c/ab
-                if abs(theta + np.pi/2) > 5*np.pi/180:
-                    continue
-                
-                print 'a,b,c', a,b,c
-                print 'theta', theta, theta*180/np.pi
-                print 'rho', rho
-                print 
+
+        begin = time.time()
+
+        import sys
+        if lines_list is None:
+            print 'no lines detected, exit'
+            sys.exit()
+        lines = np.array(lines_list[0])
+        line_number = lines.shape[0]
+        print line_number,"lines"
+#            lines_all = []
+        A = np.column_stack((lines[:,0], -lines[:,1], np.ones((line_number,1))))
+#        print A
+        B = np.column_stack((lines[:,2], -lines[:,3], np.ones((line_number,1))))
+#        print B
+        line_params = np.cross(A,B)
+#        print line_params
+        a = line_params[:,0]
+        b = line_params[:,1]
+        c = line_params[:,2]
+        ab = np.sqrt(a**2+b**2)
+        theta = np.arctan2(-np.sign(c)*b, -np.sign(c)*a)
+        rho = np.abs(c)/ab
+        lines_all = np.hstack((A[:,:2], B[:,:2], np.column_stack((rho, theta))))
+        horizontal_enough = abs(theta + np.pi/2) < 5*np.pi/180
+        lines_horizontal = lines_all[horizontal_enough]
+        print 'convert polar time', time.time() - begin
+
+#            for i, (x1,y1,x2,y2) in enumerate(lines[0]):
+#                # clip to -pi/2 to pi/2
+#                print x1,y1,x2,y2
+#                # from this point on, for use of hough transform, y has negative coordinate
+#                line_params = np.cross(np.array([x1,-y1,1]), np.array([x2,-y2,1]))
+#                a,b,c = line_params
+#                
+#                ab = np.sqrt(a**2+b**2)
+#                if c < 0:
+#                    theta = np.arctan2(b, a)
+#                    rho = -c/ab
+#                else:
+#                    theta = np.arctan2(-b, -a)
+#                    rho = c/ab
+#                if abs(theta + np.pi/2) > 5*np.pi/180:
+#                    continue
+#                
+#                print 'a,b,c', a,b,c
+#                print 'theta', theta, theta*180/np.pi
+#                print 'rho', rho
+#                print 
 
 #                tang = (y2-y1)/(0.00001+x2-x1)
 #                if abs(tang) > 0.1:
@@ -74,7 +104,7 @@ class EdgeTuner(ParamsTuner):
 #                p1 = np.array([x1,y1], dtype=np.float)
 #                p2 = np.array([x2,y2], dtype=np.float)
 #                d = abs(np.cross(p2-p1, p1))/linalg.norm(p2-p1)
-                lines_all.append((x1,-y1,x2,-y2,rho,theta))
+#                lines_all.append((x1,-y1,x2,-y2,rho,theta))
                 
 #                for p in voting_points:
 #                    cv2.circle(img_color, (p[0],p[1]), 1, 
@@ -110,8 +140,10 @@ class EdgeTuner(ParamsTuner):
 #                D[i,j] = line_line_distance(l1,l2)
 #        print D
         
-        lines_all = np.array(lines_all)
-        lines_sorted = lines_all[lines_all[:,4].argsort()]
+#        lines_all = np.array(lines_all)
+
+        begin = time.time()
+        lines_sorted = lines_horizontal[lines_horizontal[:,4].argsort()]
         
 #        lines_sort = sorted(lines_all, key=itemgetter(4))
         ds_sort = lines_sorted[:,4]
@@ -134,26 +166,16 @@ class EdgeTuner(ParamsTuner):
             theta_mean = np.mean(line_group[:,5])
             print theta_mean*180/np.pi, rho_mean
             a,b,c = np.cos(theta_mean), np.sin(theta_mean), -rho_mean
-            def project_point_to_line(points, line):
-                '''
-                points: n*2
-                return n*2
-                '''
-                a,b = line
-                P0 = np.vstack((points.T,np.ones((points.shape[0],1)).T))
-                A = np.array([[b*b, -a*b, -a], [-a*b, a*a, -b], [0,0,a*a+b*b]])
-                P = np.dot(A,P0)
-                p = P[:2,:]/A[2,2]
-                return p.T
-            
-            endpoints = None
-            for x1,y1,x2,y2,rho,theta in line_group:
-                if endpoints is None:
-                    endpoints = np.array([[x1,y1],[x2,y2]])
-                else:
-                    endpoints = np.vstack((endpoints, np.array([[x1,y1],[x2,y2]])))
+#            group_number = line_group.shape[0]
+#            endpoints = np.zeros((group_number,6))
+            endpoints = np.vstack((line_group[:,:2], line_group[:,2:4]))
+#            for x1,y1,x2,y2,rho,theta in line_group:
+#                if endpoints is None:
+#                    endpoints = np.array([[x1,y1],[x2,y2]])
+#                else:
+#                    endpoints = np.vstack((endpoints, np.array([[x1,y1],[x2,y2]])))
 #            print a/c, b/c
-            endpoints_proj = project_point_to_line(endpoints, (a/c, b/c))
+            endpoints_proj = geometry.project_point_to_line(endpoints, (a/c, b/c))
             e1 = endpoints_proj[np.argmin(endpoints_proj[:,0])]
             e2 = endpoints_proj[np.argmax(endpoints_proj[:,0])]
             print e1,e2
@@ -164,6 +186,9 @@ class EdgeTuner(ParamsTuner):
         
         merged_line = np.array(merged_line)
         merged_line = merged_line[merged_line[:,0].argsort()[::-1]]
+        
+        print 'merging line time', time.time() - begin
+        
         print 'merged_line'
         img_lines = cv2.cvtColor(self.img, cv2.cv.CV_GRAY2BGR)
         img_lines = cv2.resize(img_lines, (img_lines.shape[1]/2,img_lines.shape[0]/2)) 

@@ -7,13 +7,23 @@ def sample_vector_normal_to_vector(axis, size):
     initial guess v0 is the closest to (0,0,1) 
     '''
     proj_vector = project_to_plane(np.array([0,0,1]), axis, np.array([0,0,0]))
+    print 'proj_vector', proj_vector 
     v0 = proj_vector/linalg.norm(proj_vector)
 #    v0 = np.array([axis[1],-axis[0],0], dtype=np.float)
 #    thetas = np.random.random(size)*np.pi
-    thetas = np.random.random(size)*20*np.pi/180
+    thetas = np.random.random(size)*5*np.pi/180
     vrots = [rodrigues_rotation(v0, axis, sample_theta) for sample_theta in thetas]
     vrots = np.array(vrots, dtype=np.float)
     return vrots
+
+
+def signed_distance_origin_to_plane_batch(plane_normal, plane_points):
+    '''
+    plane_points: n*3
+    '''
+    d = np.dot(plane_points, plane_normal)
+    return d
+
 
 def distance_origin_to_plane_batch(plane_normal, plane_points):
     '''
@@ -25,6 +35,20 @@ def distance_origin_to_plane_batch(plane_normal, plane_points):
 def distance_origin_to_plane(plane_normal, plane_point):
     d = -np.dot(plane_normal, plane_point)
     return abs(d)
+
+def is_on_same_side_as_with_projs_batch(target_points, line_direction, line_point,
+                                         plane_normal, ref_point, target_projs):
+    line_normal_on_plane = np.cross(plane_normal, line_direction)
+    sign_target = np.dot(target_projs-line_point, line_normal_on_plane) > 0
+    sign_ref = np.dot(line_normal_on_plane, ref_point-line_point) > 0
+    return sign_target == sign_ref
+
+def is_on_same_side_as_batch(target_points, line_direction, line_point, plane_normal, ref_point):
+    line_normal_on_plane = np.cross(plane_normal, line_direction)
+    target_projs = project_to_plane_batch(target_points, plane_normal, line_point)
+    sign_target = np.dot(target_projs-line_point, line_normal_on_plane) > 0
+    sign_ref = np.dot(line_normal_on_plane, ref_point-line_point) > 0
+    return sign_target == sign_ref
 
 def is_on_same_side_as(target_point, line_direction, line_point, plane_normal, ref_point):
     '''
@@ -45,21 +69,49 @@ def adjust_normal_direction(plane_normal, plane_point):
     else:
         return -plane_normal
 
+def project_to_plane_only_distance(target_point, plane_normal, plane_point):
+    proj_len = np.dot(target_point - plane_point, plane_normal)
+    return abs(proj_len)
+
 def project_to_plane(target_point, plane_normal, plane_point):
-    proj_len = np.dot(plane_point - target_point, plane_normal)
+    proj_len = np.dot(target_point-plane_point, plane_normal)
     proj = target_point - proj_len*plane_normal
     return proj
+
+def find_boundingbox_project(target_points, plane_normal, plane_point, direction_vector):
+    projs = project_to_plane_batch(target_points, plane_normal, plane_point)
+    offsets = np.dot(projs - plane_point, direction_vector)
+    endpoint_max = plane_point + offsets.max()*direction_vector
+    endpoint_min = plane_point + offsets.min()*direction_vector
+    line_normal_on_plane = np.cross(plane_normal, direction_vector)
+    dists = abs(np.dot(projs - plane_point, line_normal_on_plane))
+    h = dists.max()
+    return endpoint_min, direction_vector, line_normal_on_plane, linalg.norm(endpoint_max-endpoint_min), h
+
+    
+def project_to_plane_only_distance_batch(target_points, plane_normal, plane_point):
+    proj_lens = np.dot(target_points - plane_point, plane_normal)
+    return abs(proj_lens)
+
+def project_to_plane_with_distance_batch(target_points, plane_normal, plane_point):
+    '''
+    target_points: n by 3
+    '''
+    proj_lens = np.dot(target_points - plane_point, plane_normal)
+    projs = target_points - np.outer(proj_lens, plane_normal)
+#    dists = np.sum(np.abs(target_points - projs)**2,axis=1)**(1./2)
+    return projs, abs(proj_lens)
 
 def project_to_plane_batch(target_points, plane_normal, plane_point):
     '''
     target_points: n by 3
     '''
-    proj_lens = np.dot(plane_point - target_points, plane_normal)
+    proj_lens = np.dot(target_points - plane_point, plane_normal)
     projs = target_points - np.outer(proj_lens, plane_normal)
     return projs
 
 def rodrigues_rotation(v, axis, theta):
-    vrot = v*np.cos(theta) + np.cross(axis, v)*np.sin(theta) + np.dot(axis, np.dot(axis,v)*(1-np.cos(theta)))
+    vrot = v*np.cos(theta) + np.cross(axis, v)*np.sin(theta) + axis * np.dot(axis,v)*(1-np.cos(theta))
     return vrot
 
 def plane_to_hessian_normal_form(plane_normal, plane_points):
@@ -88,8 +140,57 @@ def fit_plane_indices(p_arr, indices):
     normal = normal/linalg.norm(normal)
     return plane_params, normal
 
-def distance_to_plane(p_arr, ind, plane_params):
-    x, y, z = p_arr[ind]
-    a,b,d = plane_params
-    distance = abs(a*x + b*y + z + d)/np.sqrt(a**2+b**2+1+d**2)
-    return distance 
+def project_point_to_line(points, line):
+    '''
+    points: n*2
+    return n*2
+    '''
+    a,b = line
+    P0 = np.vstack((points.T,np.ones((points.shape[0],1)).T))
+    A = np.array([[b*b, -a*b, -a], [-a*b, a*a, -b], [0,0,a*a+b*b]])
+    P = np.dot(A,P0)
+    p = P[:2,:]/A[2,2]
+    return p.T
+
+##--------------------------------------------------------------------------------
+
+def compute_cloud_normals(points, k=10):
+    import pcl
+    cloud = pcl.PointCloud()
+    cloud.from_array(points)
+    kd = cloud.make_kdtree_flann()
+    indices, sqr_distances = kd.nearest_k_search_for_cloud(cloud, k)
+    normals = np.zeros((points.shape[0],3))
+    
+    for point_ind, neighbor_indices in enumerate(indices):
+        print "neighbors of ",point_ind
+        patch_points = points[neighbor_indices]
+#        print patch_points 
+    
+        mean = np.mean(patch_points, axis=0)
+        std =  np.std(patch_points, axis=0)
+        patch_points_normalized = (patch_points - mean) / std
+    
+        try:
+            U,s,Vt = linalg.svd(patch_points_normalized)
+        except linalg.LinAlgError as e:
+            normals[point_ind] = normals[point_ind-1]
+            continue
+            
+        V = Vt.T
+        ind = np.argsort(s)[::-1]
+        U = U[:,ind]
+        s = s[ind]
+        V = V[:,ind]
+        S = np.diag(s)
+        Mhat = np.dot(U[:,:2],np.dot(S[:2,:2],V[:,:2].T)) * std + mean
+        
+        patch_normal = np.cross(Mhat[0]-Mhat[1], Mhat[2]-Mhat[1])
+        patch_normal = linalg.norm(patch_normal)
+        normals[point_ind] = patch_normal
+        
+    return normals
+    
+
+
+
