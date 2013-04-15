@@ -3,12 +3,15 @@ Created on Apr 5, 2013
 
 @author: yuncong
 '''
-import numpy as np
+
 import os, sys
+import numpy as np
 from collections import OrderedDict
 import random 
-import scipy.linalg as linalg
-
+import numpy.linalg as linalg
+from StairsModeling import Edge, StereoMatch, utility, geometry
+import itertools
+import pcl
 
 IMGPATH='/Users/yuncong/Documents/StairsModelingPy/staircase_new/'
 PROJPATH='/Users/yuncong/Documents/StairsModelingPy/'
@@ -16,495 +19,306 @@ PROJPATH='/Users/yuncong/Documents/StairsModelingPy/'
 import cv2
 img_id = 18
 top = cv2.imread(IMGPATH+"top%d.jpg"%img_id, 0)
+#top = cv2.resize(top_o, (top_o.shape[1]/2, top_o.shape[0]/2))
 bottom = cv2.imread(IMGPATH+"bottom%d.jpg"%img_id, 0)
-dispTop = None
+#bottom = cv2.resize(bottom_o, (bottom_o.shape[1]/2, bottom_o.shape[0]/2))
 
-os.chdir(PROJPATH)
-R = np.asarray(cv2.cv.Load('extrinsics.yml', name='R'))
-T = np.asarray(cv2.cv.Load('extrinsics.yml', name='T'))
-R1 = np.asarray(cv2.cv.Load('extrinsics.yml', name='R1'))
-R2 = np.asarray(cv2.cv.Load('extrinsics.yml', name='R2'))
-P1 = np.asarray(cv2.cv.Load('extrinsics.yml', name='P1'))
-P2 = np.asarray(cv2.cv.Load('extrinsics.yml', name='P2'))
-Q = np.asarray(cv2.cv.Load('extrinsics.yml', name='Q'))
-M1 = np.asarray(cv2.cv.Load('intrinsics.yml', name='M1'))
-M2 = np.asarray(cv2.cv.Load('intrinsics.yml', name='M2'))
-D1 = np.asarray(cv2.cv.Load('intrinsics.yml', name='D1'))
-D2 = np.asarray(cv2.cv.Load('intrinsics.yml', name='D2'))
-
-class ParamsTuner():
-    def __init__(self, params, winname):
-        self.params = params
-        self.winname = winname
-        cv2.namedWindow(winname, 1)
-        cv2.moveWindow(winname, 0, 0)
-        for k,(v,r) in params.iteritems():
-            cv2.createTrackbar(k, self.winname, v, r, self.onChange)
-        self.onChange(None)
-        cv2.waitKey()
-        cv2.destroyAllWindows()
+if __name__ == '__main__':
     
-    def onChange(self, i):
-        for k in self.params.iterkeys():
-            self.params[k] = cv2.getTrackbarPos(k, self.winname), self.params[k][1]
-            print k, self.params[k][0]
-        print
-        self.doThings()
-        
-    def doThings(self):
-        pass
+    os.chdir(PROJPATH)
     
-class EdgeTuner(ParamsTuner):
-    def doThings(self):
-        thresh1, thresh2,apertureSize, hough_thresh, minLineLength, maxLineGap, \
-         rho_res, theta_res = [v for v,_ in self.params.itervalues()]
-        global top
-
-#        cv2.imshow('top', top)
-#        cv2.imshow('Gx', Gx)
-#        cv2.imshow('Gy', Gy)
-#        cv2.imshow('G', (G/G.max()*255).astype(np.uint8))
-        
-        img = cv2.resize(top, (top.shape[1]/2,top.shape[0]/2))
-#        img = cv2.equalizeHist(img)
-
-#        img = cv2.blur(img, (3,3))
-        
-        Sx = np.array([[1,0,-1],[2,0,-2],[1,0,-1]])
-        Sy = Sx.T
-        Gx = cv2.filter2D(img, -1, Sx)
-        Gy = cv2.filter2D(img, -1, Sy)
-        G = np.sqrt(Gx.astype(np.float)**2 + Gy.astype(np.float)**2)
-        cv2.imshow('G', (G/G.max()*255).astype(np.uint8))
-#        cv2.imshow('Gy', Gy)
-
-        import time
-        begin = time.time()
-        T = np.arctan(Gy/(0.00001+Gx))
-#        print time.time() - begin
-        
-        begin = time.time()
-        a = np.tan(22.5/180*np.pi)
-        b = np.tan(67.5/180*np.pi)
-        T_round = np.zeros_like(T).astype(np.int)
-#        T_round = np.zeros((T.shape[0],T.shape[1],2)).astype(np.bool)
-#        T_round[abs(T)<a] = [0,0]   #0
-#        T_round[(T>a) * (T<b)] = [0,1]  #45
-#        T_round[abs(T)>b] = [1,0]   #90
-#        T_round[(T>-b) * (T<-a)] = [1,1]    #135
-        T_round[abs(T)<a] = 0  #0
-        T_round[(T>a) * (T<b)] = 45
-        T_round[abs(T)>b] = 90   #90
-        T_round[(T>-b) * (T<-a)] = 135
-#        print time.time() - begin
-        
-        begin = time.time()
-        maximum = np.zeros_like(T).astype(np.bool)
-        larger_than_top = G[1:-1,1:-1] > G[:-2,1:-1]
-        larger_than_bottom = G[1:-1,1:-1] > G[2:,1:-1]
-        larger_than_left = G[1:-1,1:-1] > G[1:-1,:-2]
-        larger_than_right = G[1:-1,1:-1] > G[1:-1,2:]
-        larger_than_NE = G[1:-1,1:-1] > G[:-2,2:]
-        larger_than_NW = G[1:-1,1:-1] > G[:-2,:-2]
-        larger_than_SE = G[1:-1,1:-1] > G[2:,2:]
-        larger_than_SW = G[1:-1,1:-1] > G[2:,:-2]
-#        C0 = (T_round[1:-1,1:-1][0] == [0,0]).all(axis=1) * larger_than_top * larger_than_bottom
-#        C90 = (T_round[1:-1,1:-1][0] == [1,0]).all(axis=1) * larger_than_left * larger_than_right
-#        C45 = (T_round[1:-1,1:-1][0] == [0,1]).all(axis=1) * larger_than_NW * larger_than_SE
-#        C135 = (T_round[1:-1,1:-1][0] == [1,1]).all(axis=1) * larger_than_NE * larger_than_SW
-        C0 = (T_round[1:-1,1:-1] == 0) * larger_than_top * larger_than_bottom
-        C90 = (T_round[1:-1,1:-1] == 90) * larger_than_left * larger_than_right
-        C45 = (T_round[1:-1,1:-1] == 45) * larger_than_NW * larger_than_SE
-        C135 = (T_round[1:-1,1:-1] == 135)* larger_than_NE * larger_than_SW
-        maximum[1:-1,1:-1] = C0 + C90 + C45 + C135
-        
-#        for i in xrange(1, T.shape[0]-1):
-#            for j in xrange(1, T.shape[1]-1):
-#                maximum[i,j] = (T_round[i,j] == 0 and G[i,j] > G[i+1,j] and G[i,j] > G[i-1,j]) or \
-#                (T_round[i,j] == 90 and G[i,j] > G[i,j+1] and G[i,j] > G[i,j-1]) or \
-#                (T_round[i,j] == 135 and G[i,j] > G[i+1,j-1] and G[i,j] > G[i-1,j+1]) or \
-#                (T_round[i,j] == 45 and G[i,j] > G[i+1,j+1] and G[i,j] > G[i-1,j-1])
-#        print time.time() - begin     
-        cv2.imshow('non-maximum suppression', maximum.astype(np.uint8)*255)
-
-        begin = time.time()
-        edges = np.zeros_like(T).astype(np.bool)
-        larger_than_thresh2 = G > thresh2
-        larger_than_thresh1 = G > thresh1
-        left_larger_then_thresh2 = larger_than_thresh2[1:-1,:-2]
-        right_larger_then_thresh2 = larger_than_thresh2[1:-1,2:] 
-        top_larger_then_thresh2 = larger_than_thresh2[:-2,1:-1]
-        bottom_larger_then_thresh2 = larger_than_thresh2[2:,1:-1]
-        NE_larger_then_thresh2 = larger_than_thresh2[:-2,2:]
-        NW_larger_then_thresh2 = larger_than_thresh2[:-2,:-2]
-        SE_larger_then_thresh2 = larger_than_thresh2[2:,2:]
-        SW_larger_then_thresh2 = larger_than_thresh2[2:,:-2]
-        some_neighbor_larger_than_thresh2 = left_larger_then_thresh2 +right_larger_then_thresh2 +\
-         top_larger_then_thresh2+bottom_larger_then_thresh2+NE_larger_then_thresh2+NW_larger_then_thresh2+\
-         SE_larger_then_thresh2+SW_larger_then_thresh2
-        edges[1:-1,1:-1] = maximum[1:-1,1:-1] * larger_than_thresh1[1:-1,1:-1] *\
-                             (larger_than_thresh2[1:-1,1:-1] + some_neighbor_larger_than_thresh2)
-                             
-#        for i in range(T.shape[0]):
-#            for j in range(T.shape[1]):
-#                if maximum[i,j] and G[i,j] > thresh1:
-#                    if G[i,j]>thresh2 or larger_than_thresh2[i-1:i+1,j-1:j+1].any():
-#                        edges[i,j] = 255
-#        print time.time() - begin
-
-#        edges2 = cv2.Canny(Gy, thresh1, thresh2, apertureSize=apertureSize, L2gradient=True);
-        cv2.imshow("edges", edges.astype(np.uint8)*255)
-#        return
-        
-#        lines = cv2.HoughLinesP(edges, rho, theta, max(10, hough_thresh),
-#                minLineLength=max(10, minLineLength), maxLineGap=max(10, maxLineGap));
-#        begin = time.time()
-##        def hough_transform(img_bin, theta_res=1, rho_res=1):
-#        h,w = edges.shape
-#        theta = np.arange(0.0, 180.0,theta_res)
-#        D = np.sqrt((h - 1)**2 + (w - 1)**2)
-#        rho = np.arange(-D,D,rho_res)
-#        H = np.zeros((len(rho), len(theta))).astype(np.float)
-#        Coord = [[[] for col in range(len(theta))] for row in range(len(rho))]
-#        nz_y, nz_x = np.nonzero(edges)
-#        for y,x in zip(nz_y, nz_x):
-#            rho_vals = x*np.cos(theta*np.pi/180.0) + y*np.sin(theta*np.pi/180)
-#            rho_indices = np.round((rho_vals - rho[0]) / rho_res).astype(np.int)
-##            print rho_indices
-#            for t,r in enumerate(rho_indices):
-#                weight = abs(np.cos(T[y,x]-theta[t]*np.pi/180))
-#                if weight > 0.8:
-#                    H[r,t] += weight
-#                    Coord[r][t].append([x,y])
-#        print time.time() - begin
-
-        begin = time.time()
-        h,w = edges.shape
-        theta = np.arange(0.0, 180.0,theta_res)
-        D = np.sqrt((h - 1)**2 + (w - 1)**2)
-        rho = np.arange(-D,D,rho_res)
-        H = np.zeros((len(rho), len(theta))).astype(np.float)
-        Coord = [[[] for col in range(len(theta))] for row in range(len(rho))]
-        edges_copy = edges.copy()
-        good_segments = []
-        nz_y, nz_x = np.nonzero(edges_copy)
-        voting_num = 0
-        print nz_y.size, 'points remain'
-        while nz_y.size > 0:
-#        for y,x in zip(nz_y, nz_x):
-            voting_num += 1
-            i = random.randint(0, nz_y.size-1)
-            y, x = nz_y[i], nz_x[i]
-            start_point = np.array([x,y], dtype=np.int)
-            edges_copy[y,x] = 0
-            rho_vals = x*np.cos(theta*np.pi/180.0) + y*np.sin(theta*np.pi/180)
-            rho_indices = np.round((rho_vals - rho[0]) / rho_res).astype(np.int)
-            Hmax = 0
-            for t,r in enumerate(rho_indices):
-                weight = abs(np.cos(T[y,x]-theta[t]*np.pi/180))
-                if weight > 0.8:
-                    H[r,t] += weight
-#                    print "point [", x,y, "] voted H[%d,%d]"%(r,t), weight
-                    Coord[r][t].append([x,y,weight])
-                    if H[r,t] > Hmax:
-                        rmax = r
-                        tmax = t
-                        Hmax = H[r,t]
-            if Hmax < 0.9:
-                print 'eliminated', start_point
-#                edges_copy = edges.copy()
-#                nz_y, nz_x = np.nonzero(edges_copy)
-                continue
-            else:
-                follow_direction = np.array([np.sin(tmax*np.pi/180),np.cos(tmax*np.pi/180)], dtype=np.float)
-                print "potential line", rho[rmax], theta[tmax], follow_direction
-#                step = 1
-                print 'start_point', start_point
-                current_segment = np.array([start_point])
-                
-                gap = maxLineGap
-                print 'forward'
-                for offset in range(1,9999):
-                    test_point = np.round(start_point + offset * follow_direction).astype(np.int)
-                    if (test_point < 0).any() or (test_point >= edges.shape[::-1]).any():
-                        break
-                    print 'testing', test_point
-                    neighbor_on_y, neighbor_on_x = np.nonzero(edges[test_point[1]-1:test_point[1]+2, test_point[0]-1:test_point[0]+2])
-                    if neighbor_on_y.size > 0:
-                        for i, j in zip(neighbor_on_y, neighbor_on_x):
-                            neighbor_point = np.array([test_point[0]+j-1, test_point[1]+i-1], dtype=np.int)
-#                            print 'neighbor_point', neighbor_point
-#                            print 'current_segment', current_segment, current_segment.shape
-                            if not (neighbor_point==current_segment).all(axis=1).any():
-                                current_segment = np.vstack((current_segment, neighbor_point))
-                                print 'append', neighbor_point, 'to current_segment'
-                                gap = maxLineGap
-                                print 'gap', gap
-                    else:
-                        gap = gap - 1
-                        print 'gap', gap
-                        if gap == 0: break
-                        
-                gap = maxLineGap
-                print 'backward'
-                for offset in range(1,9999):
-                    test_point = np.round(start_point - offset * follow_direction).astype(np.int)
-                    if (test_point < 0).any() or (test_point >= edges.shape[::-1]).any():
-                        break
-                    print 'testing', test_point
-                    neighbor_on_y, neighbor_on_x = np.nonzero(edges[test_point[1]-1:test_point[1]+2, test_point[0]-1:test_point[0]+2])
-                    if neighbor_on_y.size > 0:
-                        for i, j in zip(neighbor_on_y, neighbor_on_x):
-                            neighbor_point = np.array([test_point[0]+j-1, test_point[1]+i-1], dtype=np.int)
-#                            print 'neighbor_point', neighbor_point
-#                            print 'current_segment', current_segment, current_segment.shape
-                            if not (neighbor_point==current_segment).all(axis=1).any():
-                                current_segment = np.vstack((current_segment, neighbor_point))
-                                print 'append', neighbor_point, 'to current_segment'
-                                gap = maxLineGap
-                                print 'gap', gap
-                    else:
-                        gap = gap - 1
-                        print 'gap', gap
-                        if gap == 0: break
-            
-                print 'current_segment len', current_segment.shape[0]
-                if (current_segment.shape[0] > minLineLength):
-#                    edges_copy[current_segment[:,1],current_segment[:,0]] = 0
-                    for x,y in current_segment:
-                        edges_copy[y,x] = 0
-                        for x_voted,y_voted,w in Coord[rmax][tmax]:
-                            if x==x_voted and y==y_voted:
-                                print "revoke point [", x,y, "] vote", w, 'on H[%d,%d]'%(rmax,tmax)
-                                H[rmax,tmax] -= w
-                    good_segments.append(current_segment)
-                    print 'added to good_segments'
-                else:
-                    print 'less than', minLineLength, ', reject'
-                
-            nz_y, nz_x = np.nonzero(edges_copy)
-            print nz_y.size, 'points remain'
-        
-        print voting_num, 'out of', np.sum(edges.astype(np.int)), 'points voted' 
-#        for seg in good_segments:
-#            print seg
-        print time.time() - begin
-
-
-
-#        begin = time.time()
-#        print "H.max()", H.max()
-#        lines = [[]]
-#        H[H < hough_thresh] = 0        
-        
-#        import scipy.linalg as linalg
-#        for r,t in zip(*np.nonzero(H)):
-#            print t,r,Coord[r][t]
-#            P = np.atleast_2d(Coord[r][t])
-#            X = P[:,0]
-#            Y = P[:,1]
-#            X_homo = np.column_stack((X, np.ones((P.shape[0],1))))
-#            d, _,_,_ = np.array(linalg.lstsq(X_homo,Y))
-#            a = d[0]
-#            b = d[1]
-#            Xp = (P[:,0]-a*(Y-b))/(1+a**2)
-#            x1 = Xp.min()
-#            x2 = Xp.max()
-#            y1 = a*x1+b
-#            y2 = a*x2+b
-#            lines[0].append([x1, y1, x2, y2, Coord[r][t]])
-#        print time.time() - begin
-        
-#        import matplotlib.pyplot as plt
-#        from mpl_toolkits.mplot3d import Axes3D
-#        from matplotlib import cm
-#        from matplotlib.ticker import LinearLocator, FormatStrFormatter
-#        fig = plt.figure()
-#        ax = fig.gca(projection='3d')
-#        X = theta
-#        Y = rho
-#        X, Y = np.meshgrid(X, Y)
-#        surf = ax.plot_surface(X, Y, H, rstride=1, cstride=1, cmap=cm.coolwarm,
-#                linewidth=0, antialiased=False)
-###        ax.set_zlim(-1000, 1000)
-#        ax.zaxis.set_major_locator(LinearLocator(10))
-#        ax.zaxis.set_major_formatter(FormatStrFormatter('%.02f'))
-#        ax.set_xlabel("theta")
-#        ax.set_ylabel("rho")
-#        ax.set_zlabel("vote")
-        
-#        fig.colorbar(surf, shrink=0.5, aspect=5)
-#        
-#        plt.show()
-        cv2.imshow("Hough transform",(H.astype(np.float)/H.max()*255).astype(np.uint8))
-        
-        img_color = cv2.cvtColor(img, cv2.cv.CV_GRAY2BGR);
-        
-        lines = []
-        for P in good_segments:
-            X = P[:,0]
-            Y = P[:,1]
-            X_homo = np.column_stack((X, np.ones((P.shape[0],1))))
-            d, _,_,_ = np.array(linalg.lstsq(X_homo,Y))
-            a = d[0]
-            b = d[1]
-            Xp = (P[:,0]-a*(Y-b))/(1+a**2)
-            x1 = Xp.min()
-            x2 = Xp.max()
-            y1 = a*x1+b
-            y2 = a*x2+b
-            lines.append([x1, y1, x2, y2])
-            
-#            angle = np.arctan2(y2-y1, x2-x1)
-#            if angle > np.pi/2:
-#                angle = angle - np.pi
-#            elif angle < -np.pi/2:
-#                angle = angle + np.pi
-##                if abs(abs(angle) - np.pi/2) > np.pi/180*10:
-#            if abs(angle) > np.pi/180*5:
-#                continue
-            color = (0,0,255)
-#            color = (random.randint(0,255),random.randint(0,255),random.randint(0,255))
-            for p in P:
-                img_color[p[1],p[0]] = color
-#                cv2.circle(img_color, (p[0],p[1]), 1, color)
-
-#            cv2.line(img_color, (int(x1), int(y1)),(int(x2), int(y2)),
-#                     (random.randint(0,255),random.randint(0,255),random.randint(0,255)), 1, 8)
-        print time.time() - begin
-        
-#        if lines is not None:
-#            for x1,y1,x2,y2 in lines:
-                # clip to -pi/2 to pi/2
-                        
-#        if lines is not None:
-#            for x1,y1,x2,y2, voting_points in lines[0]:
-#                # clip to -pi/2 to pi/2
-#                angle = np.arctan2(y2-y1, x2-x1)
-#                if angle > np.pi/2:
-#                    angle = angle - np.pi
-#                elif angle < -np.pi/2:
-#                    angle = angle + np.pi
-##                if abs(abs(angle) - np.pi/2) > np.pi/180*10:
-#                if abs(angle) > np.pi/180*5:
-#                    continue
-##                for p in voting_points:
-##                    cv2.circle(img_color, (p[0],p[1]), 1, 
-##                               (random.randint(0,255),random.randint(0,255),random.randint(0,255)))
-#                cv2.line(img_color, (int(x1), int(y1)),(int(x2), int(y2)), (0, 0, 255), 1, 8)
-        
-#        if len(good_segments) > 0:
-#            for segment in good_segments:
-#                for i,j in segment:
-#                    img_color[j,i] = (0,0,255)
-#                # clip to -pi/2 to pi/2
-#                S = np.array(segment)
-#                s1 = np.argmin(S[:,0], 0)
-#                s2 = np.argmax(S[:,0], 0)
-#                x1 = S[s1,0]
-#                y1 = S[s1,1]
-#                x2 = S[s2,0]
-#                y2 = S[s2,1]
-#                angle = np.arctan2(y2-y1, x2-x1)
-#                if angle > np.pi/2:
-#                    angle = angle - np.pi
-#                elif angle < -np.pi/2:
-#                    angle = angle + np.pi
-##                if abs(abs(angle) - np.pi/2) > np.pi/180*10:
-#                if abs(angle) > np.pi/180*5:
-#                    continue
-##                for p in voting_points:
-##                    cv2.circle(img_color, (p[0],p[1]), 1, 
-##                               (random.randint(0,255),random.randint(0,255),random.randint(0,255)))
-#                cv2.line(img_color, (int(x1), int(y1)),(int(x2), int(y2)), (0, 0, 255), 1, 8);
-        cv2.imshow(self.winname, img_color);
-
-class SGBMTuner(ParamsTuner):
-    def doThings(self):
-        sgbm = cv2.StereoSGBM()
-        sgbm.SADWindowSize, numberOfDisparitiesMultiplier, sgbm.preFilterCap, sgbm.minDisparity, \
-        sgbm.uniquenessRatio, sgbm.speckleWindowSize, sgbm.P1, sgbm.P2, \
-        sgbm.speckleRange = [v for v,_ in self.params.itervalues()]
-        sgbm.numberOfDisparities = numberOfDisparitiesMultiplier*16
-        sgbm.disp12MaxDiff = -1
-        sgbm.fullDP = False
-        global dispTop
-        global top
-        global bottom
-        global M1
-        global D1
-        global M2
-        global D2
-#        global R
-#        global T
-        R1, R2, P1, P2, Q,topValidRoi, bottomValidRoi = cv2.stereoRectify(M1, D1, M2, D2, 
-                                (top.shape[1],top.shape[0]), R, T, flags=cv2.CALIB_ZERO_DISPARITY, alpha=0)
-
-        top_map1, top_map2 = cv2.initUndistortRectifyMap(M1, D1, R1, P1, (top.shape[1],top.shape[0]), cv2.CV_16SC2)
-        bottom_map1, bottom_map2 = cv2.initUndistortRectifyMap(M2, D2, R2, P2, (bottom.shape[1],bottom.shape[0]), cv2.CV_16SC2)
-        
-        top_r = cv2.remap(top, top_map1, top_map2, cv2.cv.CV_INTER_LINEAR);
-        bottom_r = cv2.remap(bottom, bottom_map1, bottom_map2, cv2.cv.CV_INTER_LINEAR)
-        top_small = cv2.resize(top_r, (top_r.shape[1]/2,top_r.shape[0]/2))
-        bottom_small = cv2.resize(bottom_r, (bottom_r.shape[1]/2,bottom_r.shape[0]/2))
-        cv2.imshow('top', top_small);
-        cv2.imshow('bottom', bottom_small);
-        
-#        top_r = cv2.equalizeHist(top_r)
-        top_r = cv2.blur(top_r, (5,5))
-#        bottom_r = cv2.equalizeHist(bottom_r)
-        bottom_r = cv2.blur(bottom_r, (5,5))
-        dispTop = sgbm.compute(top_r.T, bottom_r.T).T;
-        dispTopPositive = dispTop
-        dispTopPositive[dispTop<0] = 0
-        disp8 = (dispTopPositive / (sgbm.numberOfDisparities * 16.) * 255).astype(np.uint8);
-        disp_small = cv2.resize(disp8, (disp8.shape[1]/2, disp8.shape[0]/2));
-        cv2.imshow(self.winname, disp_small);
-
-if __name__ == '__main__':    
-    edgeParams = OrderedDict([('thresh1',(73,2000)),
-                              ('thresh2',(137,2000)),
-                            ('apertureSize',(3,21)),
-                              ('hough_thresh',(20,500)),
-                              ('minLineLength',(10,500)),
-                              ('maxLineGap',(20,500)),
-                              ('rho',(1,50)),
-                              ('theta',(1,10))])
-    EdgeTuner(edgeParams, 'EdgeTuner')
-    
-    sys.exit()
-
     sgbmParams = OrderedDict([('SADWindowSize',(5,51)),
                               ('numberOfDisparitiesMultiplier',(11,1000)),
                               ('preFilterCap',(100,1000)),
                               ('minDisparity',(0,1000)),
                               ('uniquenessRatio',(3,20)),
                               ('speckleWindowSize',(0,1000)),
-                              ('P1',(5300,10000)),  #300 for raw
-                              ('P2',(6500,10000)),  #96564 for raw
+                              ('P1',(300,100000)),  #300 for raw
+                              ('P2',(90000,100000)),  #90000 for raw
                               ('speckleRange',(1,10))])
-    SGBMTuner(sgbmParams, 'SGBMTuner')
+    sgbm = StereoMatch.SGBMTuner(sgbmParams, 'SGBMTuner', top, bottom)
     
-    xyz = cv2.reprojectImageTo3D(dispTop, Q, handleMissingValues=True)
-    print xyz.size / 3
+    xyz_valid = np.array([i for i in itertools.chain(*sgbm.xyz) if i[2] != 10000.]).astype(np.float32)
+    print xyz_valid.shape
     
-    import itertools
-    xyz_valid = np.array([i for i in itertools.chain(*xyz) if i[2] != 10000.]).astype(np.float32)
-    print len(xyz_valid)
-    
-import pcl
-p = pcl.PointCloud()
-p_list = [(x,y,z) for x,y,z in xyz_valid if z < 10]
-p.from_list(p_list)
+#    xyzrgb_valid = np.array([i for i in itertools.chain(*sgbm.xyzrgb) if i[2] != 10000.]).astype(np.float32)
+#    print xyzrgb_valid.shape
 
-vox = p.make_voxel_grid_filter()
-vox.set_leaf_size(0.01,0.01,0.01)
-pv = vox.filter()
-print 'after voxel grid filter', pv.size
+#    xyzrgb = sgbm.xyzrgb
+#    print xyz.size / 3
+#    invalid = (sgbm.xyzrgb == -np.inf).any(axis=2)
+#    xyzrgb_valid = sgbm.xyzrgb[np.nonzero(1-invalid)]
+#    print sgbm.xyzrgb.shape
+#    print xyzrgb_valid.shape
+#    write_XYZRGB(xyzrgb_valid, 'xyzrgb_valid.pcd')
+#    sys.exit()
+    
+    xyz = sgbm.xyz
+        
+    edgeParams = OrderedDict([('thresh1',(73,2000)),
+                              ('thresh2',(137,2000)),
+                            ('apertureSize',(3,21)),
+                              ('hough_thresh',(20,500)),
+                              ('minLineLength',(10,500)),
+                              ('maxLineGap',(100,500)),  #38
+                              ('rho',(1,50)),
+                              ('theta',(1,10))])
+    edge = Edge.EdgeTuner(edgeParams, 'EdgeTuner', sgbm.top_r)
+    
+    line_points = None
+    disp_color = cv2.cvtColor(sgbm.disp8, cv2.cv.CV_GRAY2BGR)
+    step = 0.01
+    merged_line_3d = []
+    for i, (rho,theta,x1,y1,x2,y2) in enumerate(edge.merged_line):
+        x1p, y1p, x2p, y2p = int(x1), int(y1), int(x2), int(y2)
+        p1 = np.array([x1p, y1p])
+        p2 = np.array([x2p, y2p]) 
+        cv2.line(disp_color, (x1p, y1p), (x2p, y2p), (0,0,255))
+#        e1_3d = np.array(xyz[y1p, x1p])
+#        e2_3d = np.array(xyz[y2p, x2p])
+#        
+#        print x1p, y1p, x2p, y2p
+#        print 'e1', e1_3d, 'e2', e2_3d
+        
+        steps = np.arange(0,1,0.01)
+        interm_pixels = (np.outer(steps, p2) + np.outer(1-steps, p1)).astype(np.int)
+        interm_points_3d = xyz[interm_pixels[:,1],interm_pixels[:,0]]
+        interm_points_3d_valid = np.array([p for p in interm_points_3d if -np.inf not in p])
+        print 'total points', interm_points_3d.shape[0], 'valid points', interm_points_3d_valid.shape[0]
+#        print interm_points_3d_valid
+        # interm_points_3d_valid: n*3
+        
+        mean = np.mean(interm_points_3d_valid, axis=0)
+        std =  np.std(interm_points_3d_valid, axis=0)
+        interm_points_3d_valid_normalized = (interm_points_3d_valid - mean) / std
+    
+        U,s,Vt = linalg.svd(interm_points_3d_valid_normalized)
+        V = Vt.T
+        ind = np.argsort(s)[::-1]
+        U = U[:,ind]
+        s = s[ind]
+        V = V[:,ind]
+        S = np.diag(s)
+        Mhat = np.dot(U[:,:1],np.dot(S[:1,:1],V[:,:1].T)) * std + mean
+        projected_points = Mhat[Mhat[:,2].argsort()]
+#        print projected_points
+        center_point = (projected_points[0] + projected_points[-1])/2
+        diff = projected_points[-1] - projected_points[0]
+#        print projected_points[-1], projected_points[0], diff, linalg.norm(diff)
+        direction_vector = diff / linalg.norm(diff)
+        print 'direction_vector', i, direction_vector
+        
+#        if np.dot(direction_vector, np.array([1,0,0])) > np.cos(10*np.pi/180):
+        if np.dot(direction_vector, np.array([1,0,0])) > 0.95:
+            print 'added'
+            merged_line_3d.append(np.hstack((center_point, direction_vector)))
+#        print 'U', U
+#        print 'S', S
+#        print 'V', V
+#        print 'Reconstr', Mhat
+        
+#        for a in np.arange(0,1,0.01):
+#            if -np.inf not in e1_3d: break
+#            p1_new = (a*p2 + (1-a)*p1).astype(np.int)
+#            e1_3d = xyz[p1_new[1], p1_new[0]]
+#            print p1_new, xyz[p1_new[1], p1_new[0]]
+#            print "correct e1, step %f"%a
+#             
+#        for a in np.arange(0,1,0.01):
+#            if -np.inf not in e2_3d: break
+#            p2_new = (a*p1 + (1-a)*p2).astype(np.int)
+#            e2_3d = xyz[p2_new[1], p2_new[0]]  
+#            print p2_new, xyz[p2_new[1], p2_new[0]]
+#            print "correct e2, step %f"%a
+#        print 'e1', e1_3d, 'e2', e2_3d
+#        
+#        for a in np.arange(0,1,0.01):
+#            point_xyz = a*e1_3d+(1-a)*e2_3d
+#            color_float = color_to_float((0,0,255))
+#            point_xyzrgb = np.append(point_xyz, color_float)
+        if line_points is None:
+            line_points = Mhat
+        else:
+#            line_points = np.vstack((line_points, Mhat,interm_points_3d_valid))
+            line_points = np.vstack((line_points, Mhat))
+
+    cv2.imshow("disp_color", disp_color)
+    cv2.waitKey()
+     
+    line_points_color = utility.paint_pointcloud(line_points, np.array([0,0,255]))
+#    utility.write_XYZRGB(line_points_color, 'edges.pcd')
+     
+     
+#    edge_p = pcl.PointCloud()
+#    edge_p.from_array(np.array(line_points))
+#    os.chdir(PROJPATH)
+#    edge_p.to_file("edges.pcd", ascii=True)
+    
+#    xyz_valid = np.array([i for i in itertools.chain(*xyz) if i[2] != 10000.]).astype(np.float32)
+#    edge_array = np.vstack((np.array(line_points), xyz_valid))    
+#    xyzrgb_valid = [color_to_float(c) for c in top]
+    
+#    print len(xyz_valid), len(edge_array)
+#    edge_p = pcl.PointCloud()
+#    edge_array = np.array(line_points)
+#    edge_p.from_array(line_points)
+#    edge_p.to_file("edges.pcd", ascii=True)
+
+    p = pcl.PointCloud()
+    p.from_array(xyz_valid)
+    vox = p.make_voxel_grid_filter()
+    vox.set_leaf_size(0.01,0.01,0.01)
+    pv = vox.filter()
+    xyz_downsampled = pv.to_array()
+    print 'after voxel grid filter', pv.size
+    
+    merged_line_3d = np.array(merged_line_3d)
+    plane_number = merged_line_3d.shape[0]
+    direction_vector = np.mean(merged_line_3d[:,3:], axis=0)
+    print 'direction_vector', direction_vector
+    sample_rise_normal = geometry.sample_vector_normal_to_vector(direction_vector, 1)
+    print 'sample_rise_normal', sample_rise_normal
+    plane_colors = np.random.randint(0,255,(plane_number,3))
+    for sample_rise_ind, rise_normal in enumerate(sample_rise_normal):
+        edges_plane_cloud = utility.generate_plane_frame_batch_multicolor(merged_line_3d[:,:3], direction_vector, 
+                                                      rise_normal, (4,2), plane_colors)
+#        plane_frames = utility.generate_plane_frame_batch(merged_line_3d[:,:3], direction_vector, rise_normal,(4,2))
+#        edges_plane_points = utility.add_to_pointcloud_color(line_points_color, plane_frames, np.array([255,0,0]))
+#        utility.write_XYZRGB(all_points, 'edges_plane.pcd')
+#        sys.exit()
+        
+        rise_normal = geometry.adjust_normal_direction(rise_normal, merged_line_3d[0,:3])
+        tread_normal = np.cross(direction_vector, rise_normal)
+        tread_normal = geometry.adjust_normal_direction(tread_normal, merged_line_3d[0,:3])
+        
+        rise_dist = np.zeros((plane_number-1,))
+        tread_dist = np.zeros((plane_number-1,))
+        for i in range(plane_number-1):
+            rise_dist[i] = geometry.point_to_plane_distance([merged_line_3d[i,:3]], 
+                                            rise_normal, merged_line_3d[i+1,:3])[0]
+            tread_dist[i] = geometry.point_to_plane_distance([merged_line_3d[i,:3]], 
+                                            tread_normal, merged_line_3d[i+1,:3])[0]
+        
+        rise_dist_sorted = rise_dist[rise_dist.argsort()]
+        rise_multiples_ratio = rise_dist_sorted/rise_dist_sorted[0]
+        rise_multiples = rise_multiples_ratio.astype(np.int)
+        rise_dist_each = rise_dist_sorted/rise_multiples
+        rise_dist_mean = rise_dist_each.mean()
+        rise_dist_range = rise_dist_mean + rise_dist_each.std()*np.array([-1,1])
+        
+        tread_dist_sorted = tread_dist[tread_dist.argsort()]
+        tread_multiples_ratio = tread_dist_sorted/tread_dist_sorted[0]
+        tread_multiples = tread_multiples_ratio.astype(np.int)
+        tread_dist_each = tread_dist_sorted/tread_multiples
+        tread_dist_mean = tread_dist_each.mean()
+        tread_dist_range = tread_dist_mean + tread_dist_each.std()*np.array([-1,1])
+        
+        print 'rise_dist', rise_dist
+        print 'rise_multiples_ratio', rise_multiples_ratio
+        print 'rise_dist_range', rise_dist_range
+        print 'tread_dist', tread_dist
+        print 'tread_multiples_ratio', tread_multiples_ratio
+        print 'tread_dist_range', tread_dist_range
+        
+        rise_offset = [geometry.distance_origin_to_plane(rise_normal, edge_point) 
+                            for edge_point in merged_line_3d[:,:3]]
+        tread_offset = [geometry.distance_origin_to_plane(tread_normal, edge_point)
+                            for edge_point in merged_line_3d[:,:3]]
+        
+        print 'rise_offset', rise_offset
+        print 'tread_offset', tread_offset
+        
+        sample_indices = np.random.randint(0, xyz_downsampled.shape[0], xyz_downsampled.shape[0]/3)
+        sample_points = xyz_downsampled[sample_indices]
+#        for p in xyz_downsampled:
+        print sample_points
+        
+#        edges_plane_sample_points = utility.add_to_pointcloud_color(edges_plane_points, 
+#                                                        sample_points, np.array([0,255,0]))
+#        utility.write_XYZRGB(edges_plane_sample_points, 'edges_plane_sample.pcd')
+#        sys.exit()
+        
+        p_rise_offset = geometry.distance_origin_to_plane_batch(rise_normal, sample_points)
+        print 'p_rise_offset', p_rise_offset
+        farther_than_rise = np.greater.outer(p_rise_offset, np.hstack((0, rise_offset, 9999)))
+        print farther_than_rise
+        row_id, front_rise = np.nonzero(farther_than_rise[:,1:] != farther_than_rise[:,:-1])    
+        front_rise = front_rise-1
+        
+        p_tread_offset = geometry.distance_origin_to_plane_batch(tread_normal, sample_points)
+        print 'p_tread_offset', p_tread_offset
+        farther_than_tread = np.greater.outer(p_tread_offset, np.hstack((0, tread_offset, 9999)))
+        row_id, front_tread = np.nonzero(farther_than_tread[:,1:] != farther_than_tread[:,:-1])
+        front_tread = front_tread-1
+        
+        print 'front_rise', front_rise 
+        print 'front_tread', front_tread
+        
+        inlier_indices = []
+        inlier_indices_planes = [[]]*plane_number
+        inlier_weight = 0
+        for sample_ind, rise_front_ind in enumerate(front_rise):
+            dist = 9999
+            closer = None
+            sample_point = sample_points[sample_ind]
+            if rise_front_ind > -1:
+                edgepoint_front = merged_line_3d[rise_front_ind,:3]
+                proj_front = geometry.project_to_plane(sample_point, rise_normal, edgepoint_front)
+                dist_front = linalg.norm(proj_front - edgepoint_front)
+                if dist_front < dist:
+                    dist = dist_front
+                    proj = proj_front
+                    edgepoint = edgepoint_front
+                    closer = rise_front_ind
+                
+            if rise_front_ind < len(rise_offset) - 1:
+                edgepoint_back = merged_line_3d[rise_front_ind+1,:3]
+                proj_back = geometry.project_to_plane(sample_point, rise_normal, edgepoint_back)
+                dist_back = linalg.norm(proj_back - edgepoint_back)
+                if dist_back < dist:
+                    dist = dist_back
+                    proj = proj_back
+                    edgepoint = edgepoint_back
+                    closer = rise_front_ind + 1
+            
+            if geometry.is_on_same_side_as(proj, direction_vector, edgepoint, 
+                rise_normal, np.array([0,-999,0])) or dist > 0.1:
+#                print 'ignored'
+                continue
+            print sample_point, proj, dist, edgepoint, closer
+            
+            inlier_indices_planes[closer].append(sample_ind)
+            inlier_indices.append(sample_ind) 
+
+            inlier_weight += 1
+            
+        inlier_points = [sample_points[inlier_indices_plane] for inlier_indices_plane in inlier_indices_planes]
+        print [len(inlier_indices_plane) for inlier_indices_plane in inlier_indices_planes]
+        edges_plane_inlier_points = utility.add_to_multipointcloud_multicolor(edges_plane_cloud, 
+                                                    inlier_points, plane_colors)
+        utility.write_XYZRGB(edges_plane_inlier_points, 'edges_plane_inlier.pcd')
+        print '*******',sample_rise_ind, inlier_weight
+            
+                
+sys.exit()
+
+
+#red_float = utility.color_to_float(np.array((0,0,255)))
+#white_float = utility.color_to_float(np.array((255,255,255)))
+#xyz_downsampled_color = np.hstack((xyz_downsampled, white_float*np.ones((xyz_downsampled.shape[0],1))))
+#line_points_color = np.hstack((line_points, red_float*np.ones((line_points.shape[0],1))))
+#all_points = np.vstack((xyz_downsampled_color,line_points_color))
+#utility.write_XYZRGB(all_points, 'edges.pcd')
+
 
 kd = pv.make_kdtree_flann()
 indices, sqr_distances = kd.nearest_k_search_for_cloud(p, 10)
-normals = []
+
+
+
+geometry
+
+#normals = []
 #for row in indices:
 #    neighbor_x = np.array([p_list[neighbor_ind][0] for neighbor_ind in row])
 #    neighbor_y = np.array([p_list[neighbor_ind][1] for neighbor_ind in row])
@@ -517,60 +331,37 @@ normals = []
 #    normal = normal/linalg.norm(normal)
 #    normals.append(normal)
 
-def fit_plane_indices(p_arr, indices):
-    selected_points = p_arr[indices,:]
-    xs = selected_points[:,0]
-    ys = selected_points[:,1]
-    zs = selected_points[:,2]
-    A = np.column_stack((xs, ys, np.ones(xs.size)))
-    plane_params, resid,rank,sigma = np.linalg.lstsq(A,zs)
-    normal = np.array([plane_params[0],plane_params[1],-1])
-    normal = normal/linalg.norm(normal)
-    return plane_params, normal
+#pv_arr = pv.to_array()
+#normals = []
+#for row in indices:
+#    plane_params, normal = fit_plane_indices(pv_arr, row)
+#    normals.append(normal)
+#normals = np.array(normals)
+#print normals.shape[0], 'normals computed' 
 
-def distance_to_plane(p_arr, ind, plane_params):
-    x, y, z = p_arr[ind]
-    a,b,d = plane_params
-    distance = abs(a*x + b*y + z + d)/np.sqrt(a**2+b**2+1+d**2)
-    return distance 
-
-pv_arr = pv.to_array()
-normals = []
-for row in indices:
-    plane_params, normal = fit_plane_indices(pv_arr, row)
-    normals.append(normal)
-normals = np.array(normals)
-print normals.shape[0], 'normals computed' 
-
-good_plane = []
-sample_size = 8
-for iter in range(5):
-    print 'iteration', iter
-    sample_ind = [0]*sample_size
-    for i in range(sample_size):
-        sample_ind[i] = random.randint(0, pv.size-1)
-    plane_params, normal = fit_plane_indices(pv_arr, sample_ind)
-    print 'hypothesis', plane_params, normal
-    inliers = []
-    for test_ind in range(pv.size):
-        print 'testing', test_ind
-        test_dist = distance_to_plane(pv_arr, test_ind, plane_params)
-        print 'distance is ', test_dist
-        if test_dist < 0.01:
-            print 'added to inliers'
-            inliers.append(test_ind)
-    print len(inliers), 'inliers'
-    if len(inliers) > 50:
-        print 'added to good_plane'
-        good_plane.append(inliers)
-        
-print good_plane            
-        
-
-    
-    
-    
-
+#good_plane = []
+#sample_size = 8
+#for iter in range(5):
+#    print 'iteration', iter
+#    sample_ind = [0]*sample_size
+#    for i in range(sample_size):
+#        sample_ind[i] = random.randint(0, pv.size-1)
+#    plane_params, normal = fit_plane_indices(pv_arr, sample_ind)
+#    print 'hypothesis', plane_params, normal
+#    inliers = []
+#    for test_ind in range(pv.size):
+#        print 'testing', test_ind
+#        test_dist = distance_to_plane(pv_arr, test_ind, plane_params)
+#        print 'distance is ', test_dist
+#        if test_dist < 0.01:
+#            print 'added to inliers'
+#            inliers.append(test_ind)
+#    print len(inliers), 'inliers'
+#    if len(inliers) > 50:
+#        print 'added to good_plane'
+#        good_plane.append(inliers)
+#        
+#print good_plane            
 
 #    import random
 #    p_sample = pcl.PointCloud()
@@ -594,7 +385,7 @@ print good_plane
 #p_inlier.from_array(pv.to_array()[mean_distances < 0.4])
 #p_inlier.to_file("inliers.pcd")
 
-pv.to_file("inliers.pcd")
+#pv.to_file("inliers.pcd")
 
 #    fil = pv.make_statistical_outlier_filter()
 #    fil.set_mean_k (100)
