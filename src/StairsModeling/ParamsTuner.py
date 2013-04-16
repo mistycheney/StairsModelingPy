@@ -9,7 +9,8 @@ class ParamsTuner(object):
         for k,(v,r) in params.iteritems():
             cv2.createTrackbar(k, self.winname, v, r, self.onChange)
         self.onChange(None)
-        cv2.waitKey()
+        if self.do_tune:
+            cv2.waitKey()
         cv2.destroyAllWindows()
     
     def onChange(self, i):

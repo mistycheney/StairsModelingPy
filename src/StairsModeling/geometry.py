@@ -1,5 +1,6 @@
 import numpy as np
 import numpy.linalg as linalg
+from StairsModeling import config
 
 def sample_vector_normal_to_vector(axis, size):
     '''
@@ -11,7 +12,7 @@ def sample_vector_normal_to_vector(axis, size):
     v0 = proj_vector/linalg.norm(proj_vector)
 #    v0 = np.array([axis[1],-axis[0],0], dtype=np.float)
 #    thetas = np.random.random(size)*np.pi
-    thetas = np.random.random(size)*5*np.pi/180
+    thetas = (1-2*np.random.random(size))*config.SAMPLE_NORMAL_ANGLE_DEVIATION*np.pi/180
     vrots = [rodrigues_rotation(v0, axis, sample_theta) for sample_theta in thetas]
     vrots = np.array(vrots, dtype=np.float)
     return vrots
@@ -154,26 +155,30 @@ def project_point_to_line(points, line):
 
 ##--------------------------------------------------------------------------------
 
-def compute_cloud_normals(points, k=10):
+def compute_cloud_normals(points, kd=None, k=50):
     import pcl
     cloud = pcl.PointCloud()
     cloud.from_array(points)
-    kd = cloud.make_kdtree_flann()
+    if kd is None:
+        kd = cloud.make_kdtree_flann()
     indices, sqr_distances = kd.nearest_k_search_for_cloud(cloud, k)
     normals = np.zeros((points.shape[0],3))
     
     for point_ind, neighbor_indices in enumerate(indices):
-        print "neighbors of ",point_ind
+#        print "neighbors of ",point_ind
         patch_points = points[neighbor_indices]
 #        print patch_points 
     
         mean = np.mean(patch_points, axis=0)
         std =  np.std(patch_points, axis=0)
-        patch_points_normalized = (patch_points - mean) / std
+#        if (std == 0).any():
+#            print patch_points
+        patch_points_normalized = (patch_points - mean) / (std+0.0000001)
     
         try:
             U,s,Vt = linalg.svd(patch_points_normalized)
         except linalg.LinAlgError as e:
+            print 'PCA error', patch_points_normalized
             normals[point_ind] = normals[point_ind-1]
             continue
             
@@ -185,8 +190,23 @@ def compute_cloud_normals(points, k=10):
         S = np.diag(s)
         Mhat = np.dot(U[:,:2],np.dot(S[:2,:2],V[:,:2].T)) * std + mean
         
-        patch_normal = np.cross(Mhat[0]-Mhat[1], Mhat[2]-Mhat[1])
-        patch_normal = linalg.norm(patch_normal)
+        found = False
+        for i in range(k-1):
+            v1 = Mhat[0]-Mhat[i]
+            if not (v1 == 0).all():
+                for j in range(i+1, k-1):
+                    v2 = Mhat[0]-Mhat[j]
+                    patch_normal = np.cross(v1, v2)
+                    if linalg.norm(patch_normal) != 0:
+                        found = True
+                        break
+            if found: break
+            
+#        patch_normal = np.cross(v1, v2)
+        if linalg.norm(patch_normal) == 0:
+            print v1, v2
+        patch_normal = patch_normal/linalg.norm(patch_normal)
+        patch_normal = adjust_normal_direction(patch_normal, points[point_ind])
         normals[point_ind] = patch_normal
         
     return normals

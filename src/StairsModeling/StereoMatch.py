@@ -1,4 +1,5 @@
 from StairsModeling.ParamsTuner import ParamsTuner
+from StairsModeling import config
 import cv2
 import numpy as np
 import random
@@ -9,10 +10,8 @@ class SGBMTuner(ParamsTuner):
         self.top = top
         self.bottom = bottom
 
-#        IMGPATH='/Users/yuncong/Documents/StairsModelingPy/staircase_new/'
-        PROJPATH='/Users/yuncong/Documents/StairsModelingPy/'
-        extrinsic_filepath = PROJPATH + 'extrinsics.yml'
-        intrinsic_filepath = PROJPATH + 'intrinsics.yml'
+        extrinsic_filepath = config.PROJPATH + 'extrinsics.yml'
+        intrinsic_filepath = config.PROJPATH + 'intrinsics.yml'
         self.R = np.asarray(cv2.cv.Load(extrinsic_filepath, name='R'))
         self.T = np.asarray(cv2.cv.Load(extrinsic_filepath, name='T'))
         self.R1 = np.asarray(cv2.cv.Load(extrinsic_filepath, name='R1'))
@@ -25,6 +24,7 @@ class SGBMTuner(ParamsTuner):
         self.D1 = np.asarray(cv2.cv.Load(intrinsic_filepath, name='D1'))
         self.D2 = np.asarray(cv2.cv.Load(intrinsic_filepath, name='D2'))
         
+        self.do_tune = config.TUNE_DISPARITY_MAP
         super(SGBMTuner, self).__init__(params, winname)
     
     def doThings(self):

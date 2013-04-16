@@ -6,6 +6,7 @@ staircase_new_rect/
 staircase_new_result/
 
 *.pcd
+*.p
 
 .DS_Store
 

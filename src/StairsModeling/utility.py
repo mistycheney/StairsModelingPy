@@ -31,7 +31,7 @@ def generate_stairs_plane_frame_batch_multicolor(edge_points, direction_vector, 
                                                  tread_normal, colors):
     plane_frames = []
     for edge_ind, edge_point in enumerate(edge_points):
-        print edge_ind
+#        print edge_ind
         w = 4
         
 #        print 'rise'
@@ -155,8 +155,9 @@ def color_to_float(color):
 
 def draw_normals(points, normals):
     normals_cloud = None
-    for p,n in zip(points, normals):
-        normals_cloud = add_to_pointcloud(normals_cloud, p + np.outer(np.arange(0,0.2,0.01), n))
+    sample_indices = np.random.randint(0,points.shape[0],10000)
+    for p,n in zip(points[sample_indices], normals[sample_indices]):
+        normals_cloud = add_to_pointcloud(normals_cloud, p + np.outer(np.arange(0,0.05,0.005), n))
     return normals_cloud
     
     

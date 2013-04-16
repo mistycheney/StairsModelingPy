@@ -4,7 +4,7 @@ Created on Apr 8, 2013
 @author: yuncong
 '''
 
-from StairsModeling import geometry
+from StairsModeling import geometry, config
 from StairsModeling.ParamsTuner import ParamsTuner
 import cv2
 import numpy as np
@@ -16,6 +16,7 @@ from operator import itemgetter
 class EdgeTuner(ParamsTuner):
     def __init__(self, params, winname, img):
         self.img = img
+        self.do_tune = config.TUNE_LINE_EXTRACTION
         super(EdgeTuner, self).__init__(params, winname)
     
     def doThings(self):
