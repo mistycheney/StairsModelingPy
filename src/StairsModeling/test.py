@@ -12,10 +12,11 @@ from StairsModeling import config
 if __name__ == '__main__':
     os.chdir(config.PROJPATH)
     results = pickle.load(open('results.p','rb'))
-    print results[results[:,3].argmax()]
+    best = results[results[:,3].argmax()]
+    print best
     
     import matplotlib.pyplot as plt
-    bins_in = np.arange(57000,60000,10)
+    bins_in = np.arange(40000,50000,10)
     hist, bins = np.histogram(results[:,3], bins_in)
 #    hist, bins = np.histogram(results[:,3])
     width = 0.7*(bins[1]-bins[0])

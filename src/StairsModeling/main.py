@@ -37,22 +37,15 @@ if __name__ == '__main__':
     edgeParams = config.DEFAULT_EDGE_PARAMS
     edge = Edge.EdgeTuner(edgeParams, 'EdgeTuner', sgbm.top_r)
     
-    line_points = None
 #    disp_color = cv2.cvtColor(sgbm.disp8, cv2.cv.CV_GRAY2BGR)
-#    step = 0.01
-    merged_line_3d = []
-    
+    edge_lines = []
+
     begin = time.time()
     for i, (rho,theta,x1,y1,x2,y2) in enumerate(edge.merged_line):
+        print 'edge', i
         x1p, y1p, x2p, y2p = int(x1), int(y1), int(x2), int(y2)
         p1 = np.array([x1p, y1p])
-        p2 = np.array([x2p, y2p]) 
-#        cv2.line(disp_color, (x1p, y1p), (x2p, y2p), (0,0,255))
-#        e1_3d = np.array(xyz[y1p, x1p])
-#        e2_3d = np.array(xyz[y2p, x2p])
-#        
-#        print x1p, y1p, x2p, y2p
-#        print 'e1', e1_3d, 'e2', e2_3d
+        p2 = np.array([x2p, y2p])
         
         steps = np.arange(0,1,0.01)
         interm_pixels = (np.outer(steps, p2) + np.outer(1-steps, p1)).astype(np.int)
@@ -60,69 +53,66 @@ if __name__ == '__main__':
         interm_points_3d_valid = np.array([p for p in interm_points_3d if -np.inf not in p])
         print 'total points', interm_points_3d.shape[0], 'valid points', interm_points_3d_valid.shape[0]
 #        print interm_points_3d_valid
-        # interm_points_3d_valid: n*3
-        
-        mean = np.mean(interm_points_3d_valid, axis=0)
-        std =  np.std(interm_points_3d_valid, axis=0)
-        interm_points_3d_valid_normalized = (interm_points_3d_valid - mean) / std
     
-        U,s,Vt = linalg.svd(interm_points_3d_valid_normalized)
-        V = Vt.T
-        ind = np.argsort(s)[::-1]
-        U = U[:,ind]
-        s = s[ind]
-        V = V[:,ind]
-        S = np.diag(s)
-        Mhat = np.dot(U[:,:1],np.dot(S[:1,:1],V[:,:1].T)) * std + mean
-        projected_points = Mhat[Mhat[:,2].argsort()]
-#        print projected_points
-        center_point = (projected_points[0] + projected_points[-1])/2
-        diff = projected_points[-1] - projected_points[0]
-#        print projected_points[-1], projected_points[0], diff, linalg.norm(diff)
-        direction_vector = diff / linalg.norm(diff)
-        print 'center point', center_point, 'direction_vector', i, direction_vector
+        regress_line, residual = geometry.PCA_line_regression(interm_points_3d_valid)
+        print 'residual', residual
         
-        if np.dot(direction_vector, np.array([1,0,0])) > np.cos(config.LINE_3D_DEVIATE_HORIZONTAL_ANGLE*np.pi/180):
-#        if np.dot(direction_vector, np.array([1,0,0])) > 0.95:
-            print 'added'
-            merged_line_3d.append(np.hstack((center_point, direction_vector)))
+        if residual.mean() > config.LINE_REGRESSION_RANSAC_RESIDUAL_THRESH: # do RANSAC            
+            print 'RANSAC'
+            best_inlier_count = 0
+            best_line = None
+            for i in range(10):
+                interm_points_samples_indices = np.random.randint(0, interm_points_3d_valid.shape[0]-1, 10)
+                interm_points_samples = interm_points_3d_valid[interm_points_samples_indices]
 
-        if line_points is None:
-            line_points = Mhat
-        else:
-#            line_points = np.vstack((line_points, Mhat,interm_points_3d_valid))
-            line_points = np.vstack((line_points, Mhat))
+                sample_line, residual = geometry.PCA_line_regression(interm_points_samples)
+                center_point = sample_line[:3]
+                line_direction = sample_line[3:6]                
+                projected_points, dists = geometry.project_points_to_line_with_distance(interm_points_3d_valid,
+                                                              line_direction, center_point)
+                print 'dists', dists
+                inlier_indices = dists < config.LINE_REGRESSION_RANSAC_INLIER_THRESH
+                inliers = interm_points_3d_valid[inlier_indices]
+                inlier_line, residual = geometry.PCA_line_regression(inliers)                
+                inlier_count = inliers.shape[0]
+                print 'inlier_count', inlier_count
     
+                if inlier_count > best_inlier_count:
+                    regress_line = inlier_line
+#                    best_inlier_projs = proj_inliers
+    
+        if np.dot(regress_line[3:6], np.array([1,0,0])) > np.cos(config.LINE_3D_DEVIATE_HORIZONTAL_ANGLE*np.pi/180):        
+            edge_lines.append(regress_line)
+            print 'regress_line', regress_line        
+    edge_lines = np.atleast_2d(edge_lines)
+    print 'edge_lines', edge_lines 
+    
+    plane_number = edge_lines.shape[0]
+    direction_vector = np.mean(edge_lines[:,3:6], axis=0)
+    direction_vector = direction_vector/linalg.norm(direction_vector)
+    print 'direction_vector', direction_vector
+    edge_points = edge_lines[:,:3]
+
     print 'PCA edge line time', time.time() - begin
+#    sys.exit()
     
 #    cv2.imshow("disp_color", disp_color)
 #    cv2.waitKey()
-        
-#    xyz_valid = np.array([i for i in itertools.chain(*xyz) if i[2] != 10000.]).astype(np.float32)
-#    edge_array = np.vstack((np.array(line_points), xyz_valid))    
-#    xyzrgb_valid = [color_to_float(c) for c in top]
+    
+#    xyz_normals = geometry.compute_cloud_normals(downsampled_cloud, k=50)
+#    normals_cloud = utility.draw_normals(downsampled_cloud, xyz_normals)
+#    xyz_cloud = utility.paint_pointcloud(downsampled_cloud, np.array([0,0,255]))
+#    xyz_normals_cloud = utility.add_to_pointcloud_color(xyz_cloud, normals_cloud, np.array([255,255,255]))
+#    utility.write_XYZRGB(xyz_normals_cloud, 'xyz_normals_cloud.pcd')
 
     p = pcl.PointCloud()
     p.from_array(xyz_valid)
     vox = p.make_voxel_grid_filter()
     vox.set_leaf_size(0.01,0.01,0.01)
     pv = vox.filter()
-    xyz_downsampled = pv.to_array()
-    point_number = xyz_downsampled.shape[0]
+    downsampled_cloud = pv.to_array()
+    point_number = downsampled_cloud.shape[0]
     print 'after voxel grid filter', point_number
-    
-#    xyz_normals = geometry.compute_cloud_normals(xyz_downsampled, k=50)
-#    normals_cloud = utility.draw_normals(xyz_downsampled, xyz_normals)
-#    xyz_cloud = utility.paint_pointcloud(xyz_downsampled, np.array([0,0,255]))
-#    xyz_normals_cloud = utility.add_to_pointcloud_color(xyz_cloud, normals_cloud, np.array([255,255,255]))
-#    utility.write_XYZRGB(xyz_normals_cloud, 'xyz_normals_cloud.pcd')
-    
-    merged_line_3d = np.array(merged_line_3d)
-    plane_number = merged_line_3d.shape[0]
-    direction_vector = np.mean(merged_line_3d[:,3:], axis=0)
-    direction_vector = direction_vector/linalg.norm(direction_vector)
-    print 'direction_vector', direction_vector
-    edge_points = merged_line_3d[:,:3]
 
     if config.USE_ONE_NORMAL:
         sample_rise_normal = config.ONE_NORMAL
@@ -136,7 +126,7 @@ if __name__ == '__main__':
 
     results = np.hstack((sample_rise_normal, np.zeros((sample_rise_normal.shape[0],1))))
     for sample_rise_ind, rise_normal in enumerate(sample_rise_normal):
-#        plane_frames = utility.generate_plane_frame_batch(merged_line_3d[:,:3], direction_vector, rise_normal,(4,2))
+#        plane_frames = utility.generate_plane_frame_batch(edge_lines[:,:3], direction_vector, rise_normal,(4,2))
 #        edges_plane_points = utility.add_to_pointcloud_color(line_points_color, plane_frames, np.array([255,0,0]))
 #        utility.write_XYZRGB(all_points, 'edges_plane.pcd')
 #        sys.exit()
@@ -148,16 +138,17 @@ if __name__ == '__main__':
         print 'rise_normal', rise_normal
         print 'tread_normal', tread_normal
         
-#        rise_cloud = utility.generate_plane_frame_batch_multicolor(merged_line_3d[:,:3], 
+#        rise_cloud = utility.generate_plane_frame_batch_multicolor(edge_lines[:,:3], 
 #                                          direction_vector, rise_normal, (4,1), rise_colors)
-#        tread_cloud = utility.generate_plane_frame_batch_multicolor(merged_line_3d[:,:3], 
+#        tread_cloud = utility.generate_plane_frame_batch_multicolor(edge_lines[:,:3], 
 #                                          direction_vector, tread_normal, (4,1), tread_colors)
 #        plane_cloud = utility.add_to_pointcloud(rise_cloud, tread_cloud)
         
         if config.OUTPUT_PCD:
             stairs_plane_cloud = utility.generate_stairs_plane_frame_batch_multicolor(edge_points, direction_vector,
                                                             rise_normal, tread_normal, plane_colors)
-            edges_plane_cloud = utility.add_to_pointcloud_color(stairs_plane_cloud, line_points, np.array([255,0,0]))
+            edge_cloud = utility.draw_lines(edge_lines[:,6:9], edge_lines[:,9:])
+            edges_plane_cloud = utility.add_to_pointcloud_color(stairs_plane_cloud, edge_cloud, np.array([255,0,0]))
             axis_cloud = utility.draw_axis()
             edges_plane_cloud = utility.add_to_pointcloud(edges_plane_cloud, axis_cloud)
             utility.write_XYZRGB(edges_plane_cloud, 'edges_plane.pcd')
@@ -167,10 +158,10 @@ if __name__ == '__main__':
         rise_dist = np.zeros((plane_number-1,))
         tread_dist = np.zeros((plane_number-1,))
         for i in range(plane_number-1):
-            rise_dist[i] = geometry.point_to_plane_distance([merged_line_3d[i,:3]], 
-                                            rise_normal, merged_line_3d[i+1,:3])[0]
-            tread_dist[i] = geometry.point_to_plane_distance([merged_line_3d[i,:3]], 
-                                            tread_normal, merged_line_3d[i+1,:3])[0]
+            rise_dist[i] = geometry.point_to_plane_distance([edge_points[i]], 
+                                            rise_normal, edge_points[i+1])[0]
+            tread_dist[i] = geometry.point_to_plane_distance([edge_points[i]], 
+                                            tread_normal, edge_points[i])[0]
         
         rise_dist_sorted = rise_dist[rise_dist.argsort()]
         rise_multiples_ratio = rise_dist_sorted/rise_dist_sorted[0]
@@ -201,8 +192,8 @@ if __name__ == '__main__':
         sample_indices = np.random.randint(0, point_number, int(point_number*config.TEST_POINT_PERCENTAGE))
 #        sample_indices = range(point_number)
         sample_number = len(sample_indices)
-        sample_points = xyz_downsampled[sample_indices]
-#        for p in xyz_downsampled:
+        sample_points = downsampled_cloud[sample_indices]
+#        for p in downsampled_cloud:
         print 'sample_points', sample_points
 
 #        edges_plane_sample_cloud = utility.add_to_pointcloud_color(edges_plane_cloud, 
@@ -248,8 +239,8 @@ if __name__ == '__main__':
 #        print 'planes_to_compare', planes_to_compare
         in_roi = is_outside + is_inside
         sample_points_roi = sample_points[in_roi]
-        planes_to_compare_roi = planes_to_compare[in_roi]
-        roi_number = sample_points_roi.shape[0]  
+        planes_to_compare_roi = np.atleast_2d(planes_to_compare[in_roi])
+        roi_number = sample_points_roi.shape[0]
         print 'planes_to_compare_roi', planes_to_compare_roi
         
 #        edges_plane_sample_roi_cloud = utility.add_to_pointcloud_color(edges_plane_cloud, 
@@ -259,7 +250,7 @@ if __name__ == '__main__':
 #        sys.exit()
         
         dist_to_plane = np.inf*np.ones((roi_number,2))    
-        for edge_ind, edge_point in enumerate(merged_line_3d[:,:3]):
+        for edge_ind, edge_point in enumerate(edge_points):
 #            print 'edge',edge_ind, edge_point
             is_comparing_this_plane = planes_to_compare_roi == edge_ind 
             dist_to_plane[is_comparing_this_plane[:,1], 1] =\
@@ -291,7 +282,7 @@ if __name__ == '__main__':
         
         if config.OUTPUT_PCD:
         
-            edges_plane_all_cloud = utility.add_to_pointcloud_color(edges_plane_cloud, xyz_downsampled, np.array([0,0,255])) 
+            edges_plane_all_cloud = utility.add_to_pointcloud_color(edges_plane_cloud, downsampled_cloud, np.array([0,0,255])) 
     #        utility.write_XYZRGB(edges_plane_all_cloud, 'edges_plane_all_cloud.pcd')
 
             box_cloud = None

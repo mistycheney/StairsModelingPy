@@ -91,8 +91,11 @@ def find_boundingbox_project(target_points, plane_normal, plane_point, direction
 
     
 def project_to_plane_only_distance_batch(target_points, plane_normal, plane_point):
-    proj_lens = np.dot(target_points - plane_point, plane_normal)
-    return abs(proj_lens)
+    if target_points.size == 0:
+        return np.nan
+    else:
+        proj_lens = np.dot(target_points - plane_point, plane_normal)
+        return abs(proj_lens)
 
 def project_to_plane_with_distance_batch(target_points, plane_normal, plane_point):
     '''
@@ -140,6 +143,37 @@ def fit_plane_indices(p_arr, indices):
     normal = np.array([plane_params[0],plane_params[1],-1])
     normal = normal/linalg.norm(normal)
     return plane_params, normal
+
+def PCA_line_regression(points):
+    
+    mean = np.mean(points, axis=0)
+    std =  np.std(points, axis=0)
+    points_normalized = (points - mean) / std
+    
+    U,s,Vt = linalg.svd(points_normalized)
+    V = Vt.T
+    ind = np.argsort(s)[::-1]
+    U = U[:,ind]
+    s = s[ind]
+    V = V[:,ind]
+    S = np.diag(s)
+    projected_points = np.dot(U[:,:1],np.dot(S[:1,:1],V[:,:1].T)) * std + mean
+    residual = np.sqrt(np.sum((points - projected_points)**2,axis=1))
+    
+    projected_points = projected_points[projected_points[:,2].argsort()] 
+    diff = projected_points[-1] - projected_points[0]
+    line_direction = diff / linalg.norm(diff)
+    center_point = (projected_points[0] + projected_points[-1])/2
+    regress_line = np.hstack((center_point, line_direction, projected_points[0], projected_points[-1]))
+    return regress_line, residual.mean()
+
+
+def project_points_to_line_with_distance(points, line_direction, line_point):
+    d = points - line_point
+    projs = line_point + np.outer(np.dot(d, line_direction), line_direction)
+    diff = points - projs
+    dists = np.sqrt(np.sum(diff**2, axis=1))
+    return projs, dists
 
 def project_point_to_line(points, line):
     '''

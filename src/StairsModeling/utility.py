@@ -18,6 +18,17 @@ def add_to_multipointcloud_multicolor(p, clouds, colors):
         p_multicolor = add_to_pointcloud_color(p_multicolor, cloud, color)
     return p_multicolor
 
+def draw_lines(e1, e2):
+    a = np.arange(0,1,0.01)
+    line_cloud = np.outer(a, e1[0]) + np.outer((1-a), e2[0])
+    for i in range(1, e1.shape[0]):
+        line_cloud = np.vstack(line_cloud, np.outer(a, e1[i]) + np.outer(a, e2[i])) 
+    return line_cloud
+
+def draw_line(e1, e2):
+    a = np.arange(0,1,0.01)
+    line_cloud = a*e1 + (1-a)*e2 
+    return line_cloud    
 
 def draw_box(x,direction1,direction2,w,h, color):
     top = add_to_pointcloud_color(None, x+np.outer(np.arange(0,w,0.01),direction1), color)

@@ -29,17 +29,20 @@ DEFAULT_EDGE_PARAMS = OrderedDict([('thresh1',(73,2000)),
                               ('rho',(1,50)),
                               ('theta',(1,10))])
 
-OUTPUT_PCD = False
-#OUTPUT_PCD = True
-USE_ONE_NORMAL = False
-#USE_ONE_NORMAL = True
-ONE_NORMAL = np.array([[-1.60194212e-01,  -1.63681845e-01,   9.73419780e-01]])
+#OUTPUT_PCD = False
+OUTPUT_PCD = True
+#USE_ONE_NORMAL = False
+USE_ONE_NORMAL = True
+ONE_NORMAL = np.array([[-1.57872966e-01,  -1.88390822e-01,   9.69321940e-01]])
 
 TUNE_LINE_EXTRACTION = False
 TUNE_DISPARITY_MAP = False
 
+LINE_REGRESSION_RANSAC_RESIDUAL_THRESH = 0.5
+LINE_REGRESSION_RANSAC_INLIER_THRESH = 0.05
+
 SAMPLE_NORMAL_NUMBER = 1000
-SAMPLE_NORMAL_ANGLE_DEVIATION = 15 # +-15 degrees from projection of (0,0,1) to the normal plane of direction vector
+SAMPLE_NORMAL_ANGLE_DEVIATION = 30 # +-15 degrees from projection of (0,0,1) to the normal plane of direction vector
 INLIER_DISTANCE = 0.1
 TEST_POINT_PERCENTAGE = 0.3 
 
